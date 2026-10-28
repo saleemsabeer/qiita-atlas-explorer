@@ -511,6 +511,7 @@ let stainStart=-1, stainSnap=true;
 for(let i=0;i<N;i++){ pos[i*3]=WX[i]; pos[i*3+1]=0; pos[i*3+2]=WZ[i]; }
 geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
 geo.setAttribute('aGlobe', new THREE.BufferAttribute(GP,3));
+geo.setAttribute('aDens', new THREE.BufferAttribute(DENS,1));
 geo.setAttribute('aColor', new THREE.BufferAttribute(col,3));
 geo.setAttribute('aAlpha', new THREE.BufferAttribute(alp,1));
 geo.setAttribute('aSize', new THREE.BufferAttribute(siz,1));
@@ -518,7 +519,7 @@ const mat = new THREE.ShaderMaterial({
   transparent:true, depthWrite:false,
   uniforms:{ uScale:{value: innerHeight*.5}, uFogColor:{value:new THREE.Color(PAPER)}, uFogNear:{value:160}, uFogFar:{value:330}, uNearBlur:{value:0}, uGlobe:{value:0},
     uGlobeLight:{value:0}, uGC:{value:new THREE.Vector3(GC.x,0,GC.z)} },
-  vertexShader:`attribute vec3 aColor, aGlobe; attribute float aAlpha, aSize;
+  vertexShader:`attribute vec3 aColor, aGlobe; attribute float aAlpha, aSize, aDens;
     varying vec3 vC; varying float vA, vDepth, vNB; uniform float uScale, uNearBlur, uGlobe, uGlobeLight;
     uniform vec3 uGC;
     void main(){ vA=aAlpha;
@@ -526,11 +527,12 @@ const mat = new THREE.ShaderMaterial({
       vec4 mv = modelViewMatrix * vec4(pMix,1.0);
       vDepth = -mv.z;
       vNB = uNearBlur * (1.0 - smoothstep(9.0, 34.0, vDepth));
-      vec3 cc = aColor;
+      /* ink pools where papers crowd: dense cores run richer, lone points stay light */
+      vec3 cc = aColor * mix(1.0, 0.74, pow(aDens, 1.6));
       float wrap = clamp(dot(normalize(pMix-uGC), normalize(cameraPosition-uGC))*.5+.5, 0.0, 1.0);
       cc *= mix(1.0, 0.82 + 0.18*wrap, uGlobeLight);
       vC = cc;
-      gl_PointSize = clamp(aSize * uScale / vDepth, 1.3, 10.0) * (1.0 + 1.5*vNB);
+      gl_PointSize = clamp(aSize * uScale / vDepth, 1.3, 10.0) * (1.0 + 1.5*vNB) * mix(0.90, 1.15, aDens);
       gl_Position = projectionMatrix * mv; }`,
   fragmentShader:`varying vec3 vC; varying float vA, vDepth, vNB;
     uniform vec3 uFogColor; uniform float uFogNear, uFogFar;
