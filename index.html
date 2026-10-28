@@ -693,13 +693,9 @@ function frame(){
 }
 frame();
 };
-(async function(){
+(function(){
   try{
-  const b64 = window.DATA_GZ_B64.replace(/\s+/g,'');
-  const bytes = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-  const text = await new Response(stream).text();
-  window.__runAtlas(JSON.parse(text));
+  window.__runAtlas(window.DATA);
   }catch(err){
     const d=document.createElement('div');
     d.style.cssText='position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:14px sans-serif;color:#2B2A24;background:#F1EFE8;z-index:99';
