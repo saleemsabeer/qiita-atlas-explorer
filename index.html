@@ -90,6 +90,13 @@ input[type=range]{flex:1; accent-color:var(--ink); height:18px}
 .yearwrap input::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; pointer-events:auto; width:13px; height:13px; border-radius:50%; background:var(--card); border:1.5px solid var(--ink); margin-top:-5.5px; cursor:ew-resize}
 .yearwrap input::-moz-range-track{height:2px; background:var(--rule)}
 .yearwrap input::-moz-range-thumb{pointer-events:auto; width:11px; height:11px; border-radius:50%; background:var(--card); border:1.5px solid var(--ink); cursor:ew-resize}
+#viewrow{display:flex; align-items:center; gap:6px; margin-top:10px}
+#viewrow .vlab{font-family:var(--serif); font-style:italic; font-size:12.5px; color:var(--ink-soft); margin-right:2px}
+#viewrow button{font:500 11.5px var(--sans); border:1px solid var(--rule); background:transparent; color:var(--ink);
+  padding:4px 10px; cursor:pointer; transition:background .12s ease, border-color .12s ease, transform .12s ease}
+#viewrow button:hover{background:var(--paper)}
+#viewrow button:active{transform:translateY(1px)}
+#viewrow button.on{border-color:var(--ink); background:var(--paper); box-shadow:inset 0 0 0 1px var(--ink)}
 .rowbtns{display:flex; flex-wrap:wrap; gap:6px; margin-top:12px}
 .rowbtns button, #tourbar button, .ghost{font:500 12.5px var(--sans); border:1px solid var(--ink); background:var(--card);
   color:var(--ink); padding:7px 12px 6px; cursor:pointer; box-shadow:0 1px 0 rgba(63,58,42,.28);
@@ -267,11 +274,6 @@ body.cinehide #compass, body.cinehide #axisbadge, body.cinehide #scalebar{opacit
       <input type="range" id="depth" min="1" max="8" step="1" value="3">
       <output id="depthout">3</output>
     </div>
-    <p class="sect">Project the map as</p>
-    <div class="modes" id="viewrow">
-      <button data-view="flat" class="on">Flat map<span>the published layout</span></button>
-      <button data-view="globe">Globe<span>same layout, on a sphere</span></button>
-    </div>
     <p class="sect">Legend <span style="font-style:normal;font-size:11px">(click to isolate)</span></p>
     <ul id="legend"></ul>
     <p class="sect">Years</p>
@@ -285,6 +287,10 @@ body.cinehide #compass, body.cinehide #axisbadge, body.cinehide #scalebar{opacit
     </div>
     <label class="check"><input type="checkbox" id="relief"> Relief, height = local paper density</label>
     <p id="reliefnote">Presentation only, the height is not a measured quantity.</p>
+    <div id="viewrow"><span class="vlab">Projection</span>
+      <button data-view="flat" class="on">Flat map</button>
+      <button data-view="globe">Globe</button>
+    </div>
     <div class="rowbtns">
       <button class="primary" id="playCinema">Watch the flyover</button>
       <button id="playTour">Play the tour</button>
@@ -872,7 +878,8 @@ function placeLabels(){
     L.el.style.left=sx+'px'; L.el.style.top=sy+'px';
     return op>0;
   };
-  let prim=0;   /* during the flyover at most three territory labels at once */
+  let prim=0;   /* during the flyover at most three labels, until the finale reveals them all */
+  const primCap = cinema.on && cinema.t<=74 ? 3 : 99;
   for (const L of labelEls){
     if (onGlobe) v3.set(L.gx, L.gy, L.gz);
     else v3.set(L.x, state.relief? 10:0, L.z);
@@ -881,7 +888,7 @@ function placeLabels(){
     const sx=(v3.x*.5+.5)*innerWidth, sy=(-v3.y*.5+.5)*innerHeight;
     const vis = facing && v3.z<1 && sx>-60 && sx<innerWidth+60 && sy>0 && sy<innerHeight;
     let op = vis ? (state.isolate!=null && state.isolate!==L.k ? .18 : .95)*lf : 0;
-    if (cinema.on && prim>=3) op=0;
+    if (cinema.on && prim>=primCap) op=0;
     if (tryPlace(L, sx, sy, op)) prim++;
   }
   /* second tier fades in as the camera comes close, in either projection */
@@ -1327,9 +1334,12 @@ function buildFlight2(){
   const wFull=distToWidth(150);
   const wT1=distToWidth(Math.min(88, Math.max(46, Math.sqrt(T1.n)*1.35)));
   F2.T1=T1; F2.T2=T2; F2.A=A; F2.B=B; F2.ridge=ridge; F2.M=M; F2.corr=corr; F2.mKeys=m.keys;
+  F2.nTerr=sites.length;
   F2.p1=vwnPath({x:A.x,z:A.z}, distToWidth(16), {x:CENTER.x,z:CENTER.z}, wFull);
   F2.p2=vwnPath({x:CENTER.x,z:CENTER.z}, wFull, {x:A.x,z:A.z}, wT1);
   F2.midAB={x:(A.x+B.x)/2, z:(A.z+B.z)/2};
+  F2.wHome=distToWidth(HOME.dist);
+  F2.p3=vwnPath(F2.midAB, 130, {x:CENTER.x,z:CENTER.z}, F2.wHome);   /* flat finale pull-out */
   const pct1=Math.round(100*T1.n/N);
   F2.caps=[
     {t0:2,  t1:9,  card:1, a:'Qiita <em>Atlas</em>',
@@ -1339,10 +1349,10 @@ function buildFlight2(){
     {t0:40, t1:48, a:'<i>'+esc(M.terr.name)+'</i><span>'+M.pct+'% of its papers carry the '+esc(M.gName)+' stain</span>', b:'MONDO, one stain among several'},
     {t0:51.5,t1:55.5, a:'<i>'+esc(T1.name)+'</i><span>'+T1.n.toLocaleString()+' papers</span>', b:'compared with…'},
     {t0:57, t1:61, a:'<i>'+esc(T2.name)+'</i><span>'+T2.n.toLocaleString()+' papers</span>', b:''},
-    {t0:64.5,t1:72, a:'the globe<span>same layout, draped on a sphere</span>', b:'Presentation, not geography'},
+    {t0:64.5,t1:73, a:'<i>the full survey</i><span>'+F2.nTerr+' territories · '+DATA.journals.length+' journals</span>', b:''},
     {t0:77, t1:89.5, card:1, a:'How honest is the picture?', bFn:()=>knn.done
-      ? 'Neighbour preservation vs the published 2D map (k='+K_NN+'): flat 3D '+knn.flat+'% · globe '+knn.globe+'%. The third dimension and the sphere aid legibility; the 2D layout is the measurement.'
-      : 'Measuring how many of each paper’s '+K_NN+' nearest map neighbours the globe keeps…'},
+      ? 'The 2D layout is the measurement; the third dimension is legibility (neighbour preservation '+knn.flat+'%). A globe view exists; it keeps '+knn.globe+'% of 2D neighbours.'
+      : 'Measuring how many of each paper’s '+K_NN+' nearest map neighbours each projection keeps…'},
   ];
   F2.ok=true;
 }
@@ -1374,13 +1384,11 @@ function rawPose(si, t){
     return poseFlat(F.M.anchor.x, F.M.anchor.z, 58, -0.2+q*Math.PI/2, 34); }
   if(si===4){                                          /* S5 STATIC / compare */
     return poseFlat(F.midAB.x, F.midAB.z, 130, -0.2+Math.PI/2, 42); }
-  if(si===5){                                          /* S6 WHIP + morph / conceptual jump */
-    const from=rawPose(4, 62), to=poseGlobe(150, -0.12, 1.32);
-    const p=mixPose(from, to, eC(Math.min(1,(t-62)/4.5)));
-    p.mix=mixAt(t); return p; }
-  const qe=eC((t-74)/16);                              /* S7 PULL OUT / closing card */
-  const p=poseGlobe(150+35*qe, -0.12+0.3*qe, 1.32-0.12*qe);
-  p.mix=1; return p;
+  if(si===5){ const q=seg(62,74);                      /* S6 PULL OUT / the flat finale begins */
+    const s=F.p3.at(q), a0=-0.2+Math.PI/2;
+    return poseFlat(s.x, s.z, s.w, a0+(HOME.azim-a0)*q, 42+6.5*q); }
+  const qe=eC((t-74)/16);                              /* S7 HOLD at home / closing card */
+  return poseFlat(CENTER.x, CENTER.z, F.wHome*(1+0.05*qe), HOME.azim+0.05*qe, 48.5);
 }
 function camAt(t){
   t=Math.max(0, Math.min(CDUR-.01, t));
