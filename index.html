@@ -211,6 +211,21 @@ body.cinema #stage{filter:contrast(1.04) saturate(1.02)}
 body.cinema #tip{display:none!important}
 body.cinehide #cinebars .bar{height:0!important}
 body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
+
+/* orientation overlays (Harrower & Sheesley: compass + grid + monorail) */
+#compass{position:fixed; left:18px; bottom:18px; z-index:47; opacity:.92; pointer-events:none;
+  transition:bottom .9s cubic-bezier(.65,0,.35,1)}
+#axisbadge{position:fixed; right:18px; bottom:52px; z-index:47; background:var(--card); border:1px solid var(--rule);
+  font:10.5px var(--sans); letter-spacing:.08em; font-variant-caps:all-small-caps; color:var(--ink-soft);
+  padding:4px 10px; opacity:0; transition:opacity .4s, bottom .9s cubic-bezier(.65,0,.35,1); pointer-events:none;
+  font-variant-numeric:tabular-nums}
+#axisbadge.show{opacity:1}
+#scalebar{position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:46; font:10.5px var(--sans);
+  color:var(--ink-soft); letter-spacing:.04em; background:var(--card); border:1px solid var(--rule); padding:3px 9px;
+  opacity:0; transition:opacity .3s; pointer-events:none; font-variant-numeric:tabular-nums}
+#scalebar.show{opacity:1}
+body.cinehide #compass, body.cinehide #axisbadge, body.cinehide #scalebar{opacity:0!important}
+@media (max-width:760px){ #compass{display:none} #scalebar{display:none} }
 @media (max-width:760px){
   #cartouche{width:min(300px, calc(100% - 70px))}
   #hint{display:none}
@@ -314,6 +329,9 @@ body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
 <div id="cinecap"><div class="cc1"></div><div class="cc2"></div></div>
 <div id="cinecard"><div class="bt"></div><div class="bs"></div></div>
 <div id="cineclick" title="Exit the flyover"></div>
+<canvas id="compass" width="76" height="76"></canvas>
+<div id="axisbadge"></div>
+<div id="scalebar"></div>
 
 <div id="hint">Drag to orbit, scroll to zoom, right-drag to pan</div>
 
@@ -524,6 +542,85 @@ const globeContourMats = [];
   flatBand.position.set(midX, -0.15, midZ); flatBand.renderOrder=-1;
   scene.add(flatBand);
 })();
+
+/* interior graticule on the flat map (orientation cue; toggle with G) */
+let gridMat, gratOn=true;
+(function(){
+  const v=[];
+  for(let i=1;i<10;i++){ const x=EXT.x0+gw*i/10; v.push(x,0.05,EXT.z0, x,0.05,EXT.z1); }
+  for(let i=1;i<10;i++){ const z=EXT.z0+gh*i/10; v.push(EXT.x0,0.05,z, EXT.x1,0.05,z); }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(v,3));
+  gridMat=new THREE.LineBasicMaterial({color:0x2B2A24, transparent:true, opacity:.08});
+  scene.add(new THREE.LineSegments(g, gridMat));
+})();
+
+/* monorail: the flight path's ground trace, a few seconds ahead (flyover only) */
+const monoGeo=new THREE.BufferGeometry();
+monoGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(22*3),3));
+const monoMat=new THREE.LineDashedMaterial({color:0x4A5FB0, transparent:true, opacity:.5, dashSize:1.8, gapSize:1.4});
+const mono=new THREE.Line(monoGeo, monoMat); mono.visible=false; mono.renderOrder=4; mono.frustumCulled=false;
+scene.add(mono);
+function monorailSet(pts){
+  if(!pts){ mono.visible=false; return; }
+  const a=monoGeo.attributes.position.array;
+  for(let i=0;i<22;i++){ const p=pts[Math.min(i,pts.length-1)]; a[i*3]=p.x; a[i*3+1]=.3; a[i*3+2]=p.z; }
+  monoGeo.attributes.position.needsUpdate=true;
+  mono.computeLineDistances(); mono.visible=true;
+}
+
+/* horizon compass: N marks the map's own north (+y of the published layout) */
+const compassCtx=el('compass').getContext('2d');
+let compassAz=1e9;
+function compassUpdate(az){
+  if(Math.abs(az-compassAz)<.004) return;
+  compassAz=az;
+  const c=compassCtx, S=76, r=S/2-6;
+  c.clearRect(0,0,S,S);
+  c.fillStyle='rgba(250,249,243,.82)'; c.strokeStyle='rgba(43,42,36,.55)'; c.lineWidth=1;
+  c.beginPath(); c.arc(S/2,S/2,r,0,2*Math.PI); c.fill(); c.stroke();
+  for(let i=0;i<12;i++){
+    const a=az + i*Math.PI/6, big=i%3===0;
+    c.strokeStyle=big?'rgba(43,42,36,.8)':'rgba(43,42,36,.38)';
+    c.beginPath();
+    c.moveTo(S/2+Math.sin(a)*(r-(big?8:5)), S/2-Math.cos(a)*(r-(big?8:5)));
+    c.lineTo(S/2+Math.sin(a)*(r-1.5),       S/2-Math.cos(a)*(r-1.5));
+    c.stroke();
+  }
+  c.fillStyle='#2B2A24'; c.font='700 10px Libre Franklin, Georgia, sans-serif';
+  c.textAlign='center'; c.textBaseline='middle';
+  c.fillText('N', S/2+Math.sin(az)*(r-15), S/2-Math.cos(az)*(r-15));
+}
+
+/* presentation-axis badge + live scale readout */
+const badgeEl=el('axisbadge'), scaleEl=el('scalebar');
+let badgeTxt=null, scaleNextT=0;
+function badgeSet(txt){
+  if(txt===badgeTxt) return; badgeTxt=txt;
+  if(!txt){ badgeEl.classList.remove('show'); return; }
+  badgeEl.textContent=txt; badgeEl.classList.add('show');
+}
+function globeBadgeText(){
+  return knn.done
+    ? 'globe = presentation, not geography · keeps '+knn.globe+'% of 2D neighbours'
+    : 'globe = presentation, not geography';
+}
+function scalebarTick(nowMs){
+  if(nowMs<scaleNextT) return; scaleNextT=nowMs+500;
+  mProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  const me=mProj.elements, src=globeMix>.5?GP:pos;
+  let n=0;
+  for(let i=0;i<N;i++){
+    if(alp[i]<.2) continue;
+    const x=src[i*3], y=src[i*3+1], z=src[i*3+2];
+    const w=me[3]*x+me[7]*y+me[11]*z+me[15]; if(w<=0) continue;
+    const sx=(me[0]*x+me[4]*y+me[8]*z+me[12])/w, sy=(me[1]*x+me[5]*y+me[9]*z+me[13])/w;
+    if(sx>-1&&sx<1&&sy>-1&&sy<1) n++;
+  }
+  scaleEl.textContent='≈'+n.toLocaleString()+' papers across this frame';
+}
+addEventListener('keydown', e=>{
+  if(e.key==='g'||e.key==='G'){ gratOn=!gratOn; syncGlobeVis(); }
+});
 (function(){
   const levels=[.09,.2,.38,.6].map(f=>f*dmax);
   const X=i=>EXT.x0+gw*i/(G-1), Z=i=>EXT.z0+gh*i/(G-1);
@@ -1366,11 +1463,12 @@ function syncGlobeVis(){
   haloMat.uniforms.uO.value=globeMix;
   bandMat.opacity=1-globeMix; flatBand.visible=globeMix<.998;
   mat.uniforms.uGlobeLight.value=globeMix;
-  globeGratMat.opacity=.5*globeMix;
   eqMat.opacity=.72*globeMix;
   globeContourMats.forEach(m=>m.opacity=.55*globeMix);
   globeGroup.visible=globeMix>.002;
   neatMat.opacity=.9*(1-globeMix);
+  gridMat.opacity=.08*(1-globeMix)*(gratOn?1:0);
+  globeGratMat.opacity=.5*globeMix*(gratOn?1:0);
   if (born>=1) contourGroup.children.forEach(c=>c.material.opacity=.55*(1-globeMix));
   contourGroup.visible=globeMix<.998;
 }
@@ -1550,6 +1648,9 @@ function frame(){
       ctl.tAzim += (globeOn? .0011 : .0007)*r*r;
     }
     applyCam();
+    compassUpdate(ctl.azim);
+    if (globeOn && !knn.done) knnTick(60);
+    badgeSet((globeOn && globeMix>.9) ? globeBadgeText() : '');
   }
   placeLabels();
   renderer.render(scene,camera);
