@@ -67,7 +67,7 @@ input[type=range]{flex:1; accent-color:var(--ink); height:18px}
 .yearwrap input::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; pointer-events:auto; width:13px; height:13px; border-radius:50%; background:var(--card); border:1.5px solid var(--ink); margin-top:-5.5px; cursor:ew-resize}
 .yearwrap input::-moz-range-track{height:2px; background:var(--rule)}
 .yearwrap input::-moz-range-thumb{pointer-events:auto; width:11px; height:11px; border-radius:50%; background:var(--card); border:1.5px solid var(--ink); cursor:ew-resize}
-.rowbtns{display:flex; gap:6px; margin-top:12px}
+.rowbtns{display:flex; flex-wrap:wrap; gap:6px; margin-top:12px}
 .rowbtns button, #tourbar button, .ghost{font:500 12.5px var(--sans); border:1px solid var(--ink); background:var(--card);
   color:var(--ink); padding:7px 12px 6px; cursor:pointer}
 .rowbtns button:hover, #tourbar button:hover, .ghost:hover{background:var(--paper)}
@@ -116,10 +116,47 @@ body.collapsed #cartouche::after{content:"Qiita Atlas"; font-family:var(--serif)
 #about p b{color:var(--ink)}
 #hint{position:fixed; bottom:22px; right:18px; z-index:10; font-size:11.5px; color:var(--ink-soft);
   background:var(--card); border:1px solid var(--rule); padding:5px 10px}
+/* cinema: fly-through */
+#cinebars .bar{position:fixed; left:0; right:0; height:0; background:#15140F; z-index:44;
+  transition:height .9s cubic-bezier(.65,0,.35,1)}
+#cinebars .bar.top{top:0}
+#cinebars .bar.bottom{bottom:0}
+#cinebars .bar.top::after,#cinebars .bar.bottom::before{content:""; position:absolute; left:0; right:0; height:16px}
+#cinebars .bar.top::after{bottom:-16px; background:linear-gradient(rgba(21,20,15,.26), transparent)}
+#cinebars .bar.bottom::before{top:-16px; background:linear-gradient(transparent, rgba(21,20,15,.26))}
+#cinevig{position:fixed; inset:0; pointer-events:none; z-index:43; opacity:0; transition:opacity 1.2s;
+  background:radial-gradient(120% 100% at 50% 45%, transparent 50%, rgba(40,36,24,.3) 100%)}
+#cineclick{position:fixed; inset:0; z-index:45; display:none; cursor:pointer}
+#cinecap{position:fixed; left:50%; transform:translateX(-50%); bottom:90px; z-index:46; text-align:center;
+  opacity:0; transition:opacity .3s; pointer-events:none; white-space:nowrap;
+  text-shadow:0 0 8px var(--paper), 0 0 3px var(--paper)}
+#cinecap.show{opacity:1}
+#cinecap .cc1{font-family:var(--serif); font-style:italic; font-size:24px; letter-spacing:.03em}
+#cinecap .cc1 span{font-family:var(--sans); font-style:normal; font-size:14px; color:var(--ink-soft); margin-left:9px; font-variant-numeric:tabular-nums}
+#cinecap .cc2{font-family:var(--sans); font-size:12.5px; color:var(--ink-soft); margin-top:5px; letter-spacing:.02em}
+#cinecard{position:fixed; left:50%; top:46%; transform:translate(-50%,-50%); z-index:46; text-align:center;
+  opacity:0; transition:opacity .45s; pointer-events:none; white-space:nowrap;
+  text-shadow:0 0 10px var(--paper), 0 0 4px var(--paper)}
+#cinecard.show{opacity:1}
+#cinecard .bt{font-family:var(--serif); font-weight:600; font-size:52px; letter-spacing:.01em}
+#cinecard .bt em{font-weight:400}
+#cinecard .bs{font-family:var(--sans); font-size:14px; color:var(--ink-soft); margin-top:8px}
+#cartouche,#count,#hint{transition:opacity .6s}
+body.cinema #cartouche, body.cinema #count, body.cinema #hint{opacity:0; pointer-events:none}
+body.cinema #cineclick{display:block}
+body.cinema #cinevig{opacity:1}
+body.cinema #stage{filter:contrast(1.04) saturate(1.02)}
+body.cinema #tip{display:none!important}
+body.cinehide #cinebars .bar{height:0!important}
+body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
 @media (max-width:760px){
   #cartouche{width:min(300px, calc(100% - 70px))}
   #hint{display:none}
   .modes{grid-template-columns:1fr}
+  #cinecap .cc1{font-size:18px}
+  #cinecap .cc1 span{font-size:12px}
+  #cinecard .bt{font-size:32px}
+  #cinecard .bs{font-size:12.5px; white-space:normal}
 }
 </style>
 </head>
@@ -161,7 +198,8 @@ body.collapsed #cartouche::after{content:"Qiita Atlas"; font-family:var(--serif)
     <label class="check"><input type="checkbox" id="relief"> Relief, height = local paper density</label>
     <p id="reliefnote">Presentation only, the height is not a measured quantity.</p>
     <div class="rowbtns">
-      <button class="primary" id="playTour">Play the tour</button>
+      <button class="primary" id="playCinema">Watch the flyover</button>
+      <button id="playTour">Play the tour</button>
       <button id="resetView">Reset view</button>
     </div>
   </div>
@@ -196,6 +234,12 @@ body.collapsed #cartouche::after{content:"Qiita Atlas"; font-family:var(--serif)
     <p style="margin-bottom:0"><button class="ghost" id="aboutClose">Close</button></p>
   </div>
 </div>
+
+<div id="cinebars"><div class="bar top"></div><div class="bar bottom"></div></div>
+<div id="cinevig"></div>
+<div id="cinecap"><div class="cc1"></div><div class="cc2"></div></div>
+<div id="cinecard"><div class="bt"></div><div class="bs"></div></div>
+<div id="cineclick" title="Exit the flyover"></div>
 
 <div id="hint">Drag to orbit, scroll to zoom, right-drag to pan</div>
 
@@ -311,24 +355,25 @@ geo.setAttribute('aAlpha', new THREE.BufferAttribute(alp,1));
 geo.setAttribute('aSize', new THREE.BufferAttribute(siz,1));
 const mat = new THREE.ShaderMaterial({
   transparent:true, depthWrite:false,
-  uniforms:{ uScale:{value: innerHeight*.5}, uFogColor:{value:new THREE.Color(PAPER)}, uFogNear:{value:160}, uFogFar:{value:330} },
+  uniforms:{ uScale:{value: innerHeight*.5}, uFogColor:{value:new THREE.Color(PAPER)}, uFogNear:{value:160}, uFogFar:{value:330}, uNearBlur:{value:0} },
   vertexShader:`attribute vec3 aColor; attribute float aAlpha, aSize;
-    varying vec3 vC; varying float vA, vDepth; uniform float uScale;
+    varying vec3 vC; varying float vA, vDepth, vNB; uniform float uScale, uNearBlur;
     void main(){ vC=aColor; vA=aAlpha;
       vec4 mv = modelViewMatrix * vec4(position,1.0);
       vDepth = -mv.z;
-      gl_PointSize = clamp(aSize * uScale / vDepth, 1.3, 10.0);
+      vNB = uNearBlur * (1.0 - smoothstep(9.0, 34.0, vDepth));
+      gl_PointSize = clamp(aSize * uScale / vDepth, 1.3, 10.0) * (1.0 + 1.5*vNB);
       gl_Position = projectionMatrix * mv; }`,
-  fragmentShader:`varying vec3 vC; varying float vA, vDepth;
+  fragmentShader:`varying vec3 vC; varying float vA, vDepth, vNB;
     uniform vec3 uFogColor; uniform float uFogNear, uFogFar;
     void main(){ vec2 d = gl_PointCoord - vec2(.5);
       float r = length(d);
-      float edge = smoothstep(.5, .36, r);
+      float edge = smoothstep(.5, mix(.36, .08, vNB), r);
       if (edge < .01) discard;
       float fog = smoothstep(uFogNear, uFogFar, vDepth);
       vec3 cRim = vC * .78;
       vec3 c = mix(cRim, vC, smoothstep(.5,.15,r));
-      gl_FragColor = vec4(mix(c, uFogColor, fog), edge * vA); }`
+      gl_FragColor = vec4(mix(c, uFogColor, fog), edge * vA * (1.0 - .5*vNB)); }`
 });
 const points = new THREE.Points(geo, mat); scene.add(points);
 
@@ -453,11 +498,14 @@ function buildLabels(){
 }
 const v3=new THREE.Vector3();
 function placeLabels(){
+  let lf = 1;   /* during the flyover, labels stay hidden until the final reveal */
+  if (cinema.on) lf = reduceMotion ? (cinema.slideI>=SLIDE_T.length-1 ? 1 : 0)
+                                   : Math.min(1, Math.max(0, (cinema.t-78)/6));
   for (const L of labelEls){
     v3.set(L.x, state.relief? 10:0, L.z).project(camera);
     const sx=(v3.x*.5+.5)*innerWidth, sy=(-v3.y*.5+.5)*innerHeight;
     const vis = v3.z<1 && sx>-60 && sx<innerWidth+60 && sy>0 && sy<innerHeight;
-    L.el.style.opacity = vis ? (state.isolate!=null && state.isolate!==L.k ? .18 : .95) : 0;
+    L.el.style.opacity = vis ? (state.isolate!=null && state.isolate!==L.k ? .18 : .95)*lf : 0;
     L.el.style.left=sx+'px'; L.el.style.top=sy+'px';
   }
 }
@@ -541,6 +589,7 @@ const tip=el('tip');
 let hoverIdx=-1, lastHover=0;
 const mProj = new THREE.Matrix4();
 function hover(e){
+  if (cinema.on) return;
   const now=performance.now(); if(now-lastHover<30) return; lastHover=now;
   mProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   const me=mProj.elements, hw=innerWidth/2, hh=innerHeight/2;
@@ -636,6 +685,178 @@ el('tNext').onclick=()=>{ tourPaused=false; tourGo(Math.min(TOUR.length-1,tourI+
 el('tPrev').onclick=()=>{ tourPaused=false; tourGo(Math.max(0,tourI-1)); };
 el('resetView').onclick=()=>{ state.isolate=null; repaint(); goHome(false); };
 
+/* ---------- cinematic fly-through ----------
+   One unbroken 90 s take: position + look-at keyframes on centripetal Catmull-Rom
+   splines, welded by a C1 monotone time->parameter map (so shot boundaries carry
+   velocity across, no hitches). Roll and fog density ride their own 1D splines. */
+const cinema = {on:false, t:0, paused:false, slideI:0, slideTimer:0};
+const SHOTS=[0,12,30,45,60,75,90], CDUR=90, SLIDE_T=[11,22,38,53,69,87];
+let cineSaved=null, posCurve=null, lookCurve=null, uMap=null, rollMap=null, fogMap=null;
+let uNBtarget=0, capActive=-2;
+const lookPt=new THREE.Vector3();
+let yrMin=9999, yrMax=0;
+for(let i=0;i<N;i++){ const y=P[i][F.year]; if(y<yrMin)yrMin=y; if(y>yrMax)yrMax=y; }
+
+function herm(times, vals){   /* C1 keyframe interpolator, slopes capped to stay well-behaved */
+  const n=times.length, m=new Array(n);
+  for(let i=0;i<n;i++){
+    if(i===0||i===n-1){ m[i]=0; continue; }
+    m[i]=(vals[i+1]-vals[i-1])/(times[i+1]-times[i-1]);
+    const dl=(vals[i]-vals[i-1])/(times[i]-times[i-1]), dr=(vals[i+1]-vals[i])/(times[i+1]-times[i]);
+    const cap=3*Math.min(Math.abs(dl),Math.abs(dr));
+    if(Math.abs(m[i])>cap) m[i]=Math.sign(m[i])*cap;
+  }
+  return t=>{
+    if(t<=times[0]) return vals[0];
+    if(t>=times[n-1]) return vals[n-1];
+    let i=0; while(times[i+1]<t) i++;
+    const h=times[i+1]-times[i], s=(t-times[i])/h, s2=s*s, s3=s2*s;
+    return (2*s3-3*s2+1)*vals[i] + (s3-2*s2+s)*h*m[i] + (-2*s3+3*s2)*vals[i+1] + (s3-s2)*h*m[i+1];
+  };
+}
+function buildFlight(){
+  const A=siteAnchor('gut'), B=siteAnchor('oral'), C=siteAnchor('respiratory'), D=siteAnchor('vaginal/urogenital');
+  const v=(x,y,z)=>new THREE.Vector3(x,y,z);
+  const dir=(p,q)=>{ const dx=q.x-p.x, dz=q.z-p.z, l=Math.hypot(dx,dz)||1; return {x:dx/l,z:dz/l}; };
+  const dAB=dir(A,B), pAB={x:-dAB.z, z:dAB.x};
+  const th0=Math.atan2(A.z-B.z, A.x-B.x);           /* enter the oral orbit from the gut side */
+  const circ=(th,r)=>({x:B.x+Math.cos(th)*r, z:B.z+Math.sin(th)*r});
+  const o1=circ(th0+1.15,24), o2=circ(th0+2.2,22);
+  const dBC=dir(B,C), dCD=dir(C,D);
+  const hp=v(HOME.x+HOME.dist*Math.sin(HOME.polar)*Math.sin(HOME.azim),
+             HOME.dist*Math.cos(HOME.polar),
+             HOME.z+HOME.dist*Math.sin(HOME.polar)*Math.cos(HOME.azim));
+  const KT=[0,12,21,30,37,45,53,60,68,75,83,90];
+  const PK=[ v(A.x-dAB.x*52+pAB.x*6,  7, A.z-dAB.z*52+pAB.z*6),      /* cold open, in the fog */
+             v(A.x-dAB.x*16,         11, A.z-dAB.z*16),
+             v(A.x+pAB.x*10-dAB.x*2, 13, A.z+pAB.z*10-dAB.z*2),       /* skim the gut plain */
+             v(A.x+(B.x-A.x)*.68,    15, A.z+(B.z-A.z)*.68),
+             v(o1.x, 20, o1.z),                                       /* banking orbit, oral */
+             v(o2.x, 27, o2.z),
+             v(B.x+(C.x-B.x)*.45+pAB.x*8, 48, B.z+(C.z-B.z)*.45+pAB.z*8),  /* crane, open water */
+             v(C.x-dBC.x*15, 27, C.z-dBC.z*15),                       /* respiratory flyby */
+             v(D.x-dCD.x*15, 12, D.z-dCD.z*15),                       /* descend toward the gap */
+             v(D.x-dCD.x*7.5, 8.5, D.z-dCD.z*7.5),                    /* push-in, nearly still */
+             v((D.x+hp.x)/2, Math.max(50,hp.y*.7), (D.z+hp.z)/2),     /* rise */
+             hp ];                                                    /* the reveal = home view */
+  const LK=[ v(A.x,0,A.z), v(A.x,0,A.z), v(A.x+dAB.x*9,0,A.z+dAB.z*9),
+             v(B.x,0,B.z), v(B.x,0,B.z), v(B.x+(C.x-B.x)*.12,0,B.z+(C.z-B.z)*.12),
+             v(B.x+(C.x-B.x)*.75,0,B.z+(C.z-B.z)*.75),
+             v(C.x,0,C.z), v(D.x,0,D.z), v(D.x,0,D.z),
+             v((D.x+CENTER.x)/2,0,(D.z+CENTER.z)/2), v(CENTER.x,0,CENTER.z) ];
+  posCurve=new THREE.CatmullRomCurve3(PK,false,'centripetal');
+  lookCurve=new THREE.CatmullRomCurve3(LK,false,'centripetal');
+  uMap=herm(KT, KT.map((_,i)=>i/(KT.length-1)));
+  rollMap=herm(KT,[0,0,-.03,-.055,.06,.04,.018,.025,-.02,0,0,0]);
+  fogMap=herm(KT,[.3,.75,.9,.9,.9,.9,.95,.9,.85,.85,1,1]);
+}
+const CAPS=[
+  {t0:2,  t1:10,  card:1, a:'Qiita <em>Atlas</em>', b:'A flight over '+N.toLocaleString()+' papers on the human microbiome'},
+  {t0:14, t1:28,  a:'<i>gut</i><span>'+nGut.toLocaleString()+' papers</span>', b:''},
+  {t0:33, t1:43,  a:'<i>oral</i><span>'+nOral.toLocaleString()+' papers</span>', b:''},
+  {t0:48, t1:58,  a:'<i>respiratory</i><span>'+nResp.toLocaleString()+' papers</span>', b:''},
+  {t0:62, t1:74,  a:'<i>vaginal / urogenital</i><span>'+nVag.toLocaleString()+' papers</span>', b:'The most under-studied site on the map'},
+  {t0:82.5,t1:89, card:1, a:N.toLocaleString()+' papers', b:yrMin+'–'+yrMax+' · arranged by the similarity of their language'},
+];
+function captions(t){
+  let idx=-1;
+  for(let i=0;i<CAPS.length;i++) if(t>=CAPS[i].t0 && t<CAPS[i].t1){ idx=i; break; }
+  if(idx===capActive) return;
+  capActive=idx;
+  const cap=el('cinecap'), card=el('cinecard');
+  if(idx<0){ cap.classList.remove('show'); card.classList.remove('show'); return; }
+  const c=CAPS[idx];
+  if(c.card){
+    card.querySelector('.bt').innerHTML=c.a; card.querySelector('.bs').textContent=c.b;
+    card.classList.add('show'); cap.classList.remove('show');
+  } else {
+    cap.querySelector('.cc1').innerHTML=c.a;
+    const s2=cap.querySelector('.cc2'); s2.textContent=c.b; s2.style.display=c.b?'block':'none';
+    cap.classList.add('show'); card.classList.remove('show');
+  }
+}
+function sizeBars(){
+  const H=cinema.on? Math.min(innerHeight*.16, Math.max(0,(innerHeight-innerWidth/2.39)/2)) : 0;
+  document.querySelectorAll('#cinebars .bar').forEach(b=>b.style.height=H+'px');
+  el('cinecap').style.bottom=(H+28)+'px';
+}
+function cinemaStart(){
+  if(cinema.on) return;
+  if(tourI>=0) tourExit();
+  cineSaved={ mode:state.mode, level:state.level, iso:state.isolate,
+    tx:ctl.target.x, ty:ctl.target.y, tz:ctl.target.z, dist:ctl.dist, azim:ctl.azim, polar:ctl.polar,
+    ttx:ctl.tTarget.x, tty:ctl.tTarget.y, ttz:ctl.tTarget.z, tDist:ctl.tDist, tAzim:ctl.tAzim, tPolar:ctl.tPolar };
+  if(state.mode!=='site'){
+    state.mode='site';
+    document.querySelectorAll('.modes button').forEach(x=>x.classList.toggle('on', x.dataset.mode==='site'));
+    el('depthrow').style.display='none'; computeGroups();
+  }
+  state.isolate=null; repaint(); buildLabels();
+  buildFlight();
+  cinema.on=true; cinema.t=0; cinema.paused=false; cinema.slideI=0; cinema.slideTimer=0;
+  capActive=-2; uNBtarget=1;
+  document.body.classList.add('cinema'); document.body.classList.remove('cinehide');
+  sizeBars();
+  if(reduceMotion) cineSeek(SLIDE_T[0]);
+}
+function cineSeek(t){ cinema.t=Math.max(0, Math.min(CDUR-.05, t)); capActive=-2; }
+function cinemaEnd(natural){
+  if(!cinema.on) return;
+  cinema.on=false; uNBtarget=0;
+  document.body.classList.remove('cinema'); document.body.classList.remove('cinehide');
+  sizeBars();
+  el('cinecap').classList.remove('show'); el('cinecard').classList.remove('show');
+  const s=cineSaved; cineSaved=null;
+  if(s){
+    if(state.mode!==s.mode){
+      state.mode=s.mode; state.level=s.level;
+      document.querySelectorAll('.modes button').forEach(x=>x.classList.toggle('on', x.dataset.mode===s.mode));
+      el('depthrow').style.display=s.mode==='mondo'?'flex':'none'; computeGroups();
+    }
+    state.isolate=s.iso;
+    if(state.isolate!=null && !state.colorOf.has(state.isolate)) state.isolate=null;
+    repaint(); buildLabels();
+    if(natural) goHome(true);   /* flight ends exactly at the home framing */
+    else {
+      ctl.target.set(s.tx,s.ty,s.tz); ctl.dist=s.dist; ctl.azim=s.azim; ctl.polar=s.polar;
+      ctl.tTarget.set(s.ttx,s.tty,s.ttz); ctl.tDist=s.tDist; ctl.tAzim=s.tAzim; ctl.tPolar=s.tPolar;
+    }
+  }
+  lastInteract=performance.now();
+}
+function cinemaFrame(dt){
+  if(reduceMotion){                 /* slideshow of the same views instead of motion */
+    cinema.slideTimer+=dt;
+    if(cinema.slideTimer>4.6){
+      cinema.slideTimer=0; cinema.slideI++;
+      if(cinema.slideI>=SLIDE_T.length){ cinemaEnd(true); return; }
+      cineSeek(SLIDE_T[cinema.slideI]);
+    }
+  } else if(!cinema.paused) cinema.t+=dt;
+  if(cinema.t>=CDUR){ cinemaEnd(true); return; }
+  const t=cinema.t, u=uMap(t);
+  camera.position.copy(posCurve.getPoint(u));
+  lookPt.copy(lookCurve.getPoint(u));
+  camera.lookAt(lookPt);
+  camera.rotateZ(rollMap(t));
+  const fb=fogMap(t), d=camera.position.distanceTo(lookPt);
+  const fn=(d*1.05+40)*fb, ff=(d*2.4+150)*fb;
+  scene.fog.near=fn; scene.fog.far=ff;
+  mat.uniforms.uFogNear.value=fn; mat.uniforms.uFogFar.value=ff;
+  captions(t);
+}
+el('playCinema').onclick=cinemaStart;
+el('cineclick').onclick=()=>cinemaEnd(false);
+addEventListener('keydown', e=>{
+  if(!cinema.on) return;
+  if(e.key==='Escape') cinemaEnd(false);
+  else if(e.key===' '){ e.preventDefault(); cinema.paused=!cinema.paused; }
+  else if(e.key==='ArrowRight'){ e.preventDefault(); const nx=SHOTS.find(x=>x>cinema.t+.01); cineSeek(nx!=null?nx:CDUR); }
+  else if(e.key==='ArrowLeft'){ e.preventDefault(); let pv=0; for(const x of SHOTS) if(x<cinema.t-.5) pv=x; cineSeek(pv); }
+  else if(e.key==='h'||e.key==='H') document.body.classList.toggle('cinehide');
+});
+window.__cinema={ start:cinemaStart, exit:()=>cinemaEnd(false), seek:t=>{ if(cinema.on) cineSeek(t); } };
+
 /* ---------- UI wiring ---------- */
 document.querySelectorAll('.modes button').forEach(b=>{
   b.onclick=()=>{
@@ -676,18 +897,27 @@ addEventListener('resize', ()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight);
   mat.uniforms.uScale.value=innerHeight*.5;
+  sizeBars();
 });
+let prevFrameT = performance.now();
 function frame(){
   requestAnimationFrame(frame);
+  const nowT = performance.now();
+  const dt = Math.min(.1, (nowT-prevFrameT)/1000); prevFrameT = nowT;   /* frame-rate independent */
   if (born<1){
-    born=Math.min(1,(performance.now()-bornStart)/1400);
+    born=Math.min(1,(nowT-bornStart)/1400);
     const e=born<.5?2*born*born:1-Math.pow(-2*born+2,2)/2;
     points.material.opacity=1;
     mat.uniforms.uScale.value=innerHeight*.5*(0.25+0.75*e);
     contourGroup.children.forEach(c=>c.material.opacity=.55*e);
   }
-  if (!reduceMotion && tourI<0 && performance.now()-lastInteract>25000) ctl.tAzim += .0007;
-  applyCam();
+  const nb=mat.uniforms.uNearBlur.value;
+  mat.uniforms.uNearBlur.value = nb + (uNBtarget-nb)*Math.min(1, dt*5);
+  if (cinema.on) cinemaFrame(dt);
+  else {
+    if (!reduceMotion && tourI<0 && nowT-lastInteract>25000) ctl.tAzim += .0007;
+    applyCam();
+  }
   placeLabels();
   renderer.render(scene,camera);
 }
