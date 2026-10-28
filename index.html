@@ -408,7 +408,7 @@ let neatMat;
 
 /* globe furniture: a paper sphere with its own graticule */
 const globeGroup = new THREE.Group(); globeGroup.visible=false; scene.add(globeGroup);
-let sphereMat, globeGratMat, shadowMat, eqMat;
+let sphereMat, globeGratMat, shadowMat, eqMat, haloMat, bandMat, flatBand;
 (function(){
   /* engraved-globe shading: limb darkening + ink rim at the silhouette (Rumsey/GitHub-globe lineage) */
   sphereMat = new THREE.ShaderMaterial({
@@ -445,6 +445,19 @@ let sphereMat, globeGratMat, shadowMat, eqMat;
   const shadow = new THREE.Mesh(new THREE.CircleGeometry(GR*1.25, 48), shadowMat);
   shadow.rotation.x=-Math.PI/2; shadow.scale.x=1.25;
   shadow.position.set(GC.x, -GR-5, GC.z); shadow.renderOrder=0; globeGroup.add(shadow);
+  /* atmosphere in ink: a soft halo just past the silhouette, so the sphere separates from the paper */
+  haloMat = new THREE.ShaderMaterial({ transparent:true, depthWrite:false,
+    uniforms:{ uO:{value:0}, uTone:{value:new THREE.Color(0xCFCBB9)} },
+    vertexShader:`varying vec3 vN, vP;
+      void main(){ vN=normalize(mat3(modelMatrix)*normal);
+        vP=(modelMatrix*vec4(position,1.0)).xyz;
+        gl_Position=projectionMatrix*viewMatrix*vec4(vP,1.0); }`,
+    fragmentShader:`varying vec3 vN, vP; uniform float uO; uniform vec3 uTone;
+      void main(){ float ndv=clamp(dot(normalize(vN), normalize(cameraPosition-vP)),0.0,1.0);
+        float a=pow(1.0-ndv, 5.0);
+        gl_FragColor=vec4(uTone, a*.5*uO); }`});
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(GR*1.045, 64, 48), haloMat);
+  halo.position.set(GC.x, 0, GC.z); halo.renderOrder=0; globeGroup.add(halo);
   /* a faint continent: tint the sphere where the map is dense (the .09 band, filled) */
   (function(){
     const sp=sph.geometry.attributes.position, vc=new Float32Array(sp.count*3);
@@ -490,6 +503,27 @@ let sphereMat, globeGratMat, shadowMat, eqMat;
 /* contours by marching squares */
 const contourGroup = new THREE.Group(); scene.add(contourGroup);
 const globeContourMats = [];
+
+/* the filled lightest density band on the FLAT map, matching the sphere's continent tint */
+(function(){
+  const pg = new THREE.PlaneGeometry(gw, gh, 96, 96);
+  pg.rotateX(-Math.PI/2);
+  const midX=(EXT.x0+EXT.x1)/2, midZ=(EXT.z0+EXT.z1)/2;
+  const po=pg.attributes.position, vc=new Float32Array(po.count*3);
+  const br=0xF1/255, bg_=0xEF/255, bb=0xE8/255;
+  for(let i=0;i<po.count;i++){
+    const wx=midX+po.getX(i), wz=midZ+po.getZ(i);
+    let t=Math.min(1, Math.max(0, (densAt(wx,wz)/dmax-.04)/.4));
+    t=t*t*(3-2*t);
+    const k=1-.06*t;
+    vc[i*3]=br*k; vc[i*3+1]=bg_*k; vc[i*3+2]=bb*k;
+  }
+  pg.setAttribute('color', new THREE.BufferAttribute(vc,3));
+  bandMat = new THREE.MeshBasicMaterial({color:0xffffff, vertexColors:true, transparent:true, opacity:1, fog:true});
+  flatBand = new THREE.Mesh(pg, bandMat);
+  flatBand.position.set(midX, -0.15, midZ); flatBand.renderOrder=-1;
+  scene.add(flatBand);
+})();
 (function(){
   const levels=[.09,.2,.38,.6].map(f=>f*dmax);
   const X=i=>EXT.x0+gw*i/(G-1), Z=i=>EXT.z0+gh*i/(G-1);
@@ -709,14 +743,15 @@ function buildClusterTier(){          /* second-tier labels: topic clusters, sho
   const {keys,names}=groupKeys('cluster',3);
   const count=new Map();
   for(let i=0;i<N;i++){ const k=keys[i]; if(k<0) continue; count.set(k,(count.get(k)||0)+1); }
-  const top=[...count.entries()].sort((a,b)=>b[1]-a[1]).slice(0,12);
+  const top=[...count.entries()].sort((a,b)=>b[1]-a[1]).slice(0,36);
   state.keys=keys;
   clusterTier=top.map(([k,n])=>{
     const a=anchorOf(k);
     const d=document.createElement('div'); d.className='terr minor';
     d.style.fontSize='11px'; d.textContent=names.get(k);
     labelsDiv.appendChild(d);
-    return {el:d, x:a.x, z:a.z, n, w:d.offsetWidth, h:d.offsetHeight};
+    const gp=[0,0,0]; toGlobe(a.x, a.z, gp, 0);
+    return {el:d, x:a.x, z:a.z, gx:gp[0], gy:gp[1], gz:gp[2], n, w:d.offsetWidth, h:d.offsetHeight};
   });
   state.keys=saved;
 }
@@ -750,16 +785,26 @@ function placeLabels(){
     const vis = facing && v3.z<1 && sx>-60 && sx<innerWidth+60 && sy>0 && sy<innerHeight;
     tryPlace(L, sx, sy, vis ? (state.isolate!=null && state.isolate!==L.k ? .18 : .95)*lf : 0);
   }
-  /* second tier fades in as the camera comes down over the flat map */
-  const minorF = (cinema.on || globeMix>.05) ? 0 : Math.min(1, Math.max(0, (58-ctl.dist)/14));
+  /* second tier fades in as the camera comes close, in either projection */
+  const minorGlobe = globeMix>.95;
+  const minorF = cinema.on ? 0
+    : minorGlobe ? Math.min(1, Math.max(0, (100-ctl.dist)/22))
+    : globeMix<.05 ? Math.min(1, Math.max(0, (58-ctl.dist)/14)) : 0;
+  const minorCap = minorGlobe ? 4 : (ctl.dist<36 ? 6 : 3);
   if (minorF>0 && !clusterTier) buildClusterTier();
   if (clusterTier){
     let shown=0;
+    /* a minor label under the control panel is not a label anyone can read */
+    const leftEdge = document.body.classList.contains('collapsed') ? 48 : 360;
     for (const L of clusterTier){
-      if (minorF<=0 || shown>=3){ L.el.style.opacity=0; continue; }
-      v3.set(L.x, state.relief? 10:0, L.z).project(camera);
+      if (minorF<=0 || shown>=minorCap){ L.el.style.opacity=0; continue; }
+      if (minorGlobe){
+        if ((L.gx-GC.x)*cgx + L.gy*cgy + (L.gz-GC.z)*cgz <= 0){ L.el.style.opacity=0; continue; }
+        v3.set(L.gx, L.gy, L.gz);
+      } else v3.set(L.x, state.relief? 10:0, L.z);
+      v3.project(camera);
       const sx=(v3.x*.5+.5)*innerWidth, sy=(-v3.y*.5+.5)*innerHeight;
-      if (!(v3.z<1 && sx>40 && sx<innerWidth-40 && sy>40 && sy<innerHeight-40)){ L.el.style.opacity=0; continue; }
+      if (!(v3.z<1 && sx>leftEdge && sx<innerWidth-40 && sy>40 && sy<innerHeight-40)){ L.el.style.opacity=0; continue; }
       if (tryPlace(L, sx, sy, .85*minorF*lf)) shown++;
     }
   }
@@ -816,7 +861,7 @@ const fling={vA:0, vP:0};           /* orbit release inertia */
 let lastMoveT=0;
 const canvas = renderer.domElement;
 let dragDist=0;
-canvas.addEventListener('pointerdown', e=>{ dragging=true; dragDist=0; panning=(e.button===2 || e.shiftKey) && !globeOn; px=e.clientX; py=e.clientY; fling.vA=0; fling.vP=0; lastMoveT=performance.now(); lastInteract=performance.now(); tourPause(); hideTerrCard(); });
+canvas.addEventListener('pointerdown', e=>{ dragging=true; dragDist=0; panning=(e.button===2 || e.shiftKey) && !globeOn; px=e.clientX; py=e.clientY; fling.vA=0; fling.vP=0; lastMoveT=performance.now(); lastInteract=performance.now(); tourPause(); hideTerrCard(); tip.style.display='none'; hoverIdx=-1; });
 addEventListener('pointerup', ()=>dragging=false);
 addEventListener('pointermove', e=>{
   if(dragging){
@@ -1168,6 +1213,8 @@ function syncGlobeVis(){
   sphereMat.uniforms.uOpacity.value=.98*Math.pow(globeMix,3);
   sphereMat.depthWrite = globeMix>.97;
   shadowMat.uniforms.uO.value=globeMix;
+  haloMat.uniforms.uO.value=globeMix;
+  bandMat.opacity=1-globeMix; flatBand.visible=globeMix<.998;
   mat.uniforms.uGlobeLight.value=globeMix;
   globeGratMat.opacity=.5*globeMix;
   eqMat.opacity=.72*globeMix;
