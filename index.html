@@ -395,9 +395,28 @@ let neatMat;
 const globeGroup = new THREE.Group(); globeGroup.visible=false; scene.add(globeGroup);
 let sphereMat, globeGratMat;
 (function(){
-  sphereMat = new THREE.MeshBasicMaterial({color:0xECE9DD, transparent:true, opacity:0, fog:true});
-  const sph = new THREE.Mesh(new THREE.SphereGeometry(GR-0.5, 64, 48), sphereMat);
+  sphereMat = new THREE.MeshBasicMaterial({color:0xffffff, vertexColors:true, transparent:true, opacity:0, fog:true});
+  const sph = new THREE.Mesh(new THREE.SphereGeometry(GR-0.5, 96, 64), sphereMat);
   sph.position.set(GC.x, 0, GC.z); sph.renderOrder=1; globeGroup.add(sph);
+  /* a faint continent: tint the sphere where the map is dense (the .09 band, filled) */
+  (function(){
+    const sp=sph.geometry.attributes.position, vc=new Float32Array(sp.count*3);
+    const br=0xEC/255, bg=0xE9/255, bb=0xDD/255, rr=GR-0.5;
+    const midX=(EXT.x0+EXT.x1)/2, midZ=(EXT.z0+EXT.z1)/2;
+    for(let i=0;i<sp.count;i++){
+      const x=sp.getX(i), y=sp.getY(i), z=sp.getZ(i);
+      const lat=Math.asin(Math.max(-1,Math.min(1,y/rr))), lon=Math.atan2(x,z);
+      let t=0;
+      if (Math.abs(lon)<=GLON/2 && lat>=GTILT-GLAT/2 && lat<=GTILT+GLAT/2){
+        const wx=lon/GLON*gw+midX, wz=-(lat-GTILT)/GLAT*gh+midZ;
+        t=Math.min(1, Math.max(0, (densAt(wx,wz)/dmax-.04)/.4));
+        t=t*t*(3-2*t);
+      }
+      const k=1-.09*t;
+      vc[i*3]=br*k; vc[i*3+1]=bg*k; vc[i*3+2]=bb*k;
+    }
+    sph.geometry.setAttribute('color', new THREE.BufferAttribute(vc,3));
+  })();
   const v=[], RG=GR*1.002;
   for(let la=-75; la<=75; la+=15){ const lr=la*Math.PI/180, r=RG*Math.cos(lr), y=RG*Math.sin(lr);
     for(let s=0;s<96;s++){ const a0=s/96*2*Math.PI, a1=(s+1)/96*2*Math.PI;
@@ -414,6 +433,7 @@ let sphereMat, globeGratMat;
 
 /* contours by marching squares */
 const contourGroup = new THREE.Group(); scene.add(contourGroup);
+const globeContourMats = [];
 (function(){
   const levels=[.09,.2,.38,.6].map(f=>f*dmax);
   const X=i=>EXT.x0+gw*i/(G-1), Z=i=>EXT.z0+gh*i/(G-1);
@@ -436,6 +456,17 @@ const contourGroup = new THREE.Group(); scene.add(contourGroup);
     const g=new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(verts,3));
     contourGroup.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({color:0xBFBAA8, transparent:true, opacity: reduceMotion? .55 : 0})));
+    /* the same contour, draped on the globe just above its surface */
+    const gv=new Float32Array(verts.length);
+    for(let k=0;k<verts.length;k+=3){
+      toGlobe(verts[k], verts[k+2], gv, k);
+      gv[k]=GC.x+(gv[k]-GC.x)*1.0008; gv[k+1]*=1.0008; gv[k+2]=GC.z+(gv[k+2]-GC.z)*1.0008;
+    }
+    const gg=new THREE.BufferGeometry();
+    gg.setAttribute('position', new THREE.Float32BufferAttribute(gv,3));
+    const gm=new THREE.LineBasicMaterial({color:0xBFBAA8, transparent:true, opacity:0});
+    globeContourMats.push(gm);
+    const gl=new THREE.LineSegments(gg, gm); gl.renderOrder=2; globeGroup.add(gl);
   }
 })();
 
@@ -1048,6 +1079,7 @@ function syncGlobeVis(){
   sphereMat.opacity=.98*Math.pow(globeMix,3);
   sphereMat.depthWrite = globeMix>.97;
   globeGratMat.opacity=.5*globeMix;
+  globeContourMats.forEach(m=>m.opacity=.55*globeMix);
   globeGroup.visible=globeMix>.002;
   neatMat.opacity=.9*(1-globeMix);
   if (born>=1) contourGroup.children.forEach(c=>c.material.opacity=.55*(1-globeMix));
