@@ -854,9 +854,8 @@ function buildClusterTier(){          /* second-tier labels: topic clusters, sho
 }
 const v3=new THREE.Vector3();
 function placeLabels(){
-  let lf = 1;   /* during the flyover, labels stay hidden until the final reveal */
-  if (cinema.on) lf = reduceMotion ? (cinema.slideI>=SLIDE_T.length-1 ? 1 : 0)
-                                   : Math.min(1, Math.max(0, (cinema.t-78)/6));
+  let lf = 1;   /* flyover: labels identify, they do not orient - they appear once the shot settles */
+  if (cinema.on) lf = reduceMotion ? 1 : (cinema.t<11 ? 0 : 1);
   if (globeMix>.05 && globeMix<.95) lf=0;   /* and they sit out the flat<->globe roll */
   const onGlobe=globeMix>.5;
   const cgx=camera.position.x-GC.x, cgy=camera.position.y, cgz=camera.position.z-GC.z;
@@ -873,6 +872,7 @@ function placeLabels(){
     L.el.style.left=sx+'px'; L.el.style.top=sy+'px';
     return op>0;
   };
+  let prim=0;   /* during the flyover at most three territory labels at once */
   for (const L of labelEls){
     if (onGlobe) v3.set(L.gx, L.gy, L.gz);
     else v3.set(L.x, state.relief? 10:0, L.z);
@@ -880,7 +880,9 @@ function placeLabels(){
     v3.project(camera);
     const sx=(v3.x*.5+.5)*innerWidth, sy=(-v3.y*.5+.5)*innerHeight;
     const vis = facing && v3.z<1 && sx>-60 && sx<innerWidth+60 && sy>0 && sy<innerHeight;
-    tryPlace(L, sx, sy, vis ? (state.isolate!=null && state.isolate!==L.k ? .18 : .95)*lf : 0);
+    let op = vis ? (state.isolate!=null && state.isolate!==L.k ? .18 : .95)*lf : 0;
+    if (cinema.on && prim>=3) op=0;
+    if (tryPlace(L, sx, sy, op)) prim++;
   }
   /* second tier fades in as the camera comes close, in either projection */
   const minorGlobe = globeMix>.95;
@@ -1281,108 +1283,179 @@ function runSelfTests(){
 }
 if (SELFTEST) setTimeout(runSelfTests, 900);
 
-/* ---------- cinematic fly-through ----------
-   One unbroken 90 s take: position + look-at keyframes on centripetal Catmull-Rom
-   splines, welded by a C1 monotone time->parameter map (so shot boundaries carry
-   velocity across, no hitches). Roll and fog density ride their own 1D splines. */
-const cinema = {on:false, t:0, paused:false, slideI:0, slideTimer:0};
-const SHOTS=[0,12,30,45,60,75,90], CDUR=90, SLIDE_T=[11,22,38,53,69,87];
-let cineSaved=null, posCurve=null, lookCurve=null, uMap=null, rollMap=null, fogMap=null;
-let uNBtarget=0, capActive=-2;
-const lookPt=new THREE.Vector3();
+/* ---------- cinematic fly-through v2: a 90 s, seven-shot documentary ----------
+   Shot grammar after GeoCamera (CHI 2023): one shot type + one purpose per
+   segment, no roll. Within-shot moves ride van Wijk-Nuij paths (U1).
+   Orientation cues after Harrower & Sheesley: compass, graticule, monorail.
+   Nextstrain rule: captions set the view; Esc or a drag hands the camera
+   back AT THE CURRENT POSE. Every number on screen is computed. */
+const cinema = {on:false, t:0, paused:false, slideI:0, slideTimer:0, shot:-1, half:false,
+  speed:0, peak:0, justSeeked:false};
+const CDUR=90, SHOTS=[0,10,22,36,50,62,74,90], SLIDE_T=[5,17,29,44,57.5,69,83];
+let cineSaved=null, uNBtarget=0, capActive=-2, pendingCap=-2;
+const lookPt=new THREE.Vector3(), prevCam=new THREE.Vector3();
 let yrMin=9999, yrMax=0;
 for(let i=0;i<N;i++){ const y=P[i][F.year]; if(y<yrMin)yrMin=y; if(y>yrMax)yrMax=y; }
+const F2={ok:false};
+function knnOnDone(){ if(cinema.on && capActive===F2.caps.length-1) renderCap(capActive); }
 
-function herm(times, vals){   /* C1 keyframe interpolator, slopes capped to stay well-behaved */
-  const n=times.length, m=new Array(n);
-  for(let i=0;i<n;i++){
-    if(i===0||i===n-1){ m[i]=0; continue; }
-    m[i]=(vals[i+1]-vals[i-1])/(times[i+1]-times[i-1]);
-    const dl=(vals[i]-vals[i-1])/(times[i]-times[i-1]), dr=(vals[i+1]-vals[i])/(times[i+1]-times[i]);
-    const cap=3*Math.min(Math.abs(dl),Math.abs(dr));
-    if(Math.abs(m[i])>cap) m[i]=Math.sign(m[i])*cap;
+function buildFlight2(){
+  const sites=siteCountsSorted().filter(s=>s.name!=='unspecified');
+  const T1=sites[0], T2=sites[1];
+  const A=siteAnchor(T1.name), B=siteAnchor(T2.name);
+  /* ridge: the densest line between the two largest territories */
+  const dx=B.x-A.x, dz=B.z-A.z, L=Math.hypot(dx,dz)||1, px=-dz/L, pz=dx/L;
+  const pts=[];
+  for(let s=0;s<=5;s++){
+    const u=s/5, bx=A.x+dx*u, bz=A.z+dz*u;
+    let best=-1, bo=0;
+    for(let o=-8;o<=8;o++){ const dd=densAt(bx+px*o, bz+pz*o); if(dd>best){ best=dd; bo=o; } }
+    pts.push(new THREE.Vector3(bx+px*bo, 0, bz+pz*bo));
   }
-  return t=>{
-    if(t<=times[0]) return vals[0];
-    if(t>=times[n-1]) return vals[n-1];
-    let i=0; while(times[i+1]<t) i++;
-    const h=times[i+1]-times[i], s=(t-times[i])/h, s2=s*s, s3=s2*s;
-    return (2*s3-3*s2+1)*vals[i] + (s3-2*s2+s)*h*m[i] + (-2*s3+3*s2)*vals[i+1] + (s3-s2)*h*m[i+1];
-  };
+  const ridge=new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+  /* the territory with the highest share of one MONDO level-3 stain */
+  const m=groupKeys('mondo',3);
+  let M=null;
+  for(const s of sites.slice(0,5)){
+    const cnt=new Map();
+    for(let i=0;i<N;i++){ if(state.keys[i]!==s.k) continue; const g=m.keys[i]; if(g<0) continue; cnt.set(g,(cnt.get(g)||0)+1); }
+    for(const [g,c] of cnt){ if(c>=25){ const share=c/s.n;
+      if(!M || share>M.share) M={terr:s, g, gName:m.names.get(g), c, share}; } }
+  }
+  M.anchor=anchorOf(M.terr.k); M.pct=Math.round(100*M.share);
+  const corr=corridorCount(A,B,9);
+  const wFull=distToWidth(150);
+  const wT1=distToWidth(Math.min(88, Math.max(46, Math.sqrt(T1.n)*1.35)));
+  F2.T1=T1; F2.T2=T2; F2.A=A; F2.B=B; F2.ridge=ridge; F2.M=M; F2.corr=corr; F2.mKeys=m.keys;
+  F2.p1=vwnPath({x:A.x,z:A.z}, distToWidth(16), {x:CENTER.x,z:CENTER.z}, wFull);
+  F2.p2=vwnPath({x:CENTER.x,z:CENTER.z}, wFull, {x:A.x,z:A.z}, wT1);
+  F2.midAB={x:(A.x+B.x)/2, z:(A.z+B.z)/2};
+  const pct1=Math.round(100*T1.n/N);
+  F2.caps=[
+    {t0:2,  t1:9,  card:1, a:'Qiita <em>Atlas</em>',
+      b:N.toLocaleString()+' papers on the human microbiome, '+yrMin+'–'+yrMax+', arranged by text similarity'},
+    {t0:13, t1:21, a:'<i>'+esc(T1.name)+'</i><span>'+T1.n.toLocaleString()+' papers · '+pct1+'% of the atlas</span>', b:''},
+    {t0:25, t1:34, a:'<i>'+esc(T1.name)+'</i> → <i>'+esc(T2.name)+'</i><span>'+corr.toLocaleString()+' papers along this corridor</span>', b:''},
+    {t0:40, t1:48, a:'<i>'+esc(M.terr.name)+'</i><span>'+M.pct+'% of its papers carry the '+esc(M.gName)+' stain</span>', b:'MONDO, one stain among several'},
+    {t0:51.5,t1:55.5, a:'<i>'+esc(T1.name)+'</i><span>'+T1.n.toLocaleString()+' papers</span>', b:'compared with…'},
+    {t0:57, t1:61, a:'<i>'+esc(T2.name)+'</i><span>'+T2.n.toLocaleString()+' papers</span>', b:''},
+    {t0:64.5,t1:72, a:'the globe<span>same layout, draped on a sphere</span>', b:'Presentation, not geography'},
+    {t0:77, t1:89.5, card:1, a:'How honest is the picture?', bFn:()=>knn.done
+      ? 'Neighbour preservation vs the published 2D map (k='+K_NN+'): flat 3D '+knn.flat+'% · globe '+knn.globe+'%. The third dimension and the sphere aid legibility; the 2D layout is the measurement.'
+      : 'Measuring how many of each paper’s '+K_NN+' nearest map neighbours the globe keeps…'},
+  ];
+  F2.ok=true;
 }
-function buildFlight(){
-  const A=siteAnchor('gut'), B=siteAnchor('oral'), C=siteAnchor('respiratory'), D=siteAnchor('vaginal/urogenital');
-  const v=(x,y,z)=>new THREE.Vector3(x,y,z);
-  const dir=(p,q)=>{ const dx=q.x-p.x, dz=q.z-p.z, l=Math.hypot(dx,dz)||1; return {x:dx/l,z:dz/l}; };
-  const dAB=dir(A,B), pAB={x:-dAB.z, z:dAB.x};
-  const th0=Math.atan2(A.z-B.z, A.x-B.x);           /* enter the oral orbit from the gut side */
-  const circ=(th,r)=>({x:B.x+Math.cos(th)*r, z:B.z+Math.sin(th)*r});
-  const o1=circ(th0+1.15,24), o2=circ(th0+2.2,22);
-  const dBC=dir(B,C), dCD=dir(C,D);
-  const hp=v(HOME.x+HOME.dist*Math.sin(HOME.polar)*Math.sin(HOME.azim),
-             HOME.dist*Math.cos(HOME.polar),
-             HOME.z+HOME.dist*Math.sin(HOME.polar)*Math.cos(HOME.azim));
-  const KT=[0,12,21,30,37,45,53,60,68,75,83,90];
-  const PK=[ v(A.x-dAB.x*52+pAB.x*6,  7, A.z-dAB.z*52+pAB.z*6),      /* cold open, in the fog */
-             v(A.x-dAB.x*16,         11, A.z-dAB.z*16),
-             v(A.x+pAB.x*10-dAB.x*2, 13, A.z+pAB.z*10-dAB.z*2),       /* skim the gut plain */
-             v(A.x+(B.x-A.x)*.68,    15, A.z+(B.z-A.z)*.68),
-             v(o1.x, 20, o1.z),                                       /* banking orbit, oral */
-             v(o2.x, 27, o2.z),
-             v(B.x+(C.x-B.x)*.45+pAB.x*8, 48, B.z+(C.z-B.z)*.45+pAB.z*8),  /* crane, open water */
-             v(C.x-dBC.x*15, 27, C.z-dBC.z*15),                       /* respiratory flyby */
-             v(D.x-dCD.x*15, 12, D.z-dCD.z*15),                       /* descend toward the gap */
-             v(D.x-dCD.x*7.5, 8.5, D.z-dCD.z*7.5),                    /* push-in, nearly still */
-             v((D.x+hp.x)/2, Math.max(50,hp.y*.7), (D.z+hp.z)/2),     /* rise */
-             hp ];                                                    /* the reveal = home view */
-  const LK=[ v(A.x,0,A.z), v(A.x,0,A.z), v(A.x+dAB.x*9,0,A.z+dAB.z*9),
-             v(B.x,0,B.z), v(B.x,0,B.z), v(B.x+(C.x-B.x)*.12,0,B.z+(C.z-B.z)*.12),
-             v(B.x+(C.x-B.x)*.75,0,B.z+(C.z-B.z)*.75),
-             v(C.x,0,C.z), v(D.x,0,D.z), v(D.x,0,D.z),
-             v((D.x+CENTER.x)/2,0,(D.z+CENTER.z)/2), v(CENTER.x,0,CENTER.z) ];
-  posCurve=new THREE.CatmullRomCurve3(PK,false,'centripetal');
-  lookCurve=new THREE.CatmullRomCurve3(LK,false,'centripetal');
-  uMap=herm(KT, KT.map((_,i)=>i/(KT.length-1)));
-  rollMap=herm(KT,[0,0,-.03,-.055,.06,.04,.018,.025,-.02,0,0,0]);
-  fogMap=herm(KT,[.3,.75,.9,.9,.9,.9,.95,.9,.85,.85,1,1]);
+function poseFlat(lx, lz, w, azim, elevDeg){
+  const d=widthToDist(w), e=elevDeg*Math.PI/180, h=d*Math.cos(e);
+  return { cx:lx+h*Math.sin(azim), cy:d*Math.sin(e), cz:lz+h*Math.cos(azim), lx, ly:0, lz, mix:0 };
 }
-const CAPS=[
-  {t0:2,  t1:10,  card:1, a:'Qiita <em>Atlas</em>', b:'A flight over '+N.toLocaleString()+' papers on the human microbiome'},
-  {t0:14, t1:28,  a:'<i>gut</i><span>'+nGut.toLocaleString()+' papers</span>', b:''},
-  {t0:33, t1:43,  a:'<i>oral</i><span>'+nOral.toLocaleString()+' papers</span>', b:''},
-  {t0:48, t1:58,  a:'<i>respiratory</i><span>'+nResp.toLocaleString()+' papers</span>', b:''},
-  {t0:62, t1:74,  a:'<i>vaginal / urogenital</i><span>'+nVag.toLocaleString()+' papers</span>', b:'The most under-studied site on the map'},
-  {t0:82.5,t1:89, card:1, a:N.toLocaleString()+' papers', b:yrMin+'–'+yrMax+' · arranged by the similarity of their language'},
-];
-function captions(t){
-  let idx=-1;
-  for(let i=0;i<CAPS.length;i++) if(t>=CAPS[i].t0 && t<CAPS[i].t1){ idx=i; break; }
-  if(idx===capActive) return;
-  capActive=idx;
+function poseGlobe(dist, azim, polar){
+  return { cx:GC.x+dist*Math.sin(polar)*Math.sin(azim), cy:dist*Math.cos(polar),
+           cz:GC.z+dist*Math.sin(polar)*Math.cos(azim), lx:GC.x, ly:0, lz:GC.z, mix:1 };
+}
+function mixPose(a,b,q){
+  return { cx:a.cx+(b.cx-a.cx)*q, cy:a.cy+(b.cy-a.cy)*q, cz:a.cz+(b.cz-a.cz)*q,
+           lx:a.lx+(b.lx-a.lx)*q, ly:a.ly+(b.ly-a.ly)*q, lz:a.lz+(b.lz-a.lz)*q,
+           mix:a.mix+(b.mix-a.mix)*q };
+}
+function mixAt(t){ if(t<62.5) return 0; if(t>67) return 1; const x=(t-62.5)/4.5; return x*x*(3-2*x); }
+function shotIndex(t){ let s=0; for(let i=0;i<SHOTS.length-1;i++) if(t>=SHOTS[i]) s=i; return s; }
+function rawPose(si, t){
+  const F=F2, seg=(a,b)=>eC((t-a)/(b-a));
+  if(si===0){ const s=F.p1.at(seg(0,10));              /* S1 PULL OUT / context */
+    return poseFlat(s.x, s.z, s.w, -0.12+0.1*seg(0,10), 13+4*seg(0,10)); }
+  if(si===1){ const s=F.p2.at(seg(10,22));             /* S2 PUSH IN / emphasize */
+    return poseFlat(s.x, s.z, s.w, -0.02+0.3*seg(10,22), 17); }
+  if(si===2){ const q=seg(22,36);                      /* S3 TRACKING / follow the corridor */
+    const c=F.ridge.getPoint(Math.max(0,q-0.10)), l=F.ridge.getPoint(Math.min(1,q+0.06));
+    return { cx:c.x, cy:13, cz:c.z, lx:l.x, ly:0, lz:l.z, mix:0 }; }
+  if(si===3){ const q=seg(36,50);                      /* S4 ARC / emphasize a static target */
+    return poseFlat(F.M.anchor.x, F.M.anchor.z, 58, -0.2+q*Math.PI/2, 34); }
+  if(si===4){                                          /* S5 STATIC / compare */
+    return poseFlat(F.midAB.x, F.midAB.z, 130, -0.2+Math.PI/2, 42); }
+  if(si===5){                                          /* S6 WHIP + morph / conceptual jump */
+    const from=rawPose(4, 62), to=poseGlobe(150, -0.12, 1.32);
+    const p=mixPose(from, to, eC(Math.min(1,(t-62)/4.5)));
+    p.mix=mixAt(t); return p; }
+  const qe=eC((t-74)/16);                              /* S7 PULL OUT / closing card */
+  const p=poseGlobe(150+35*qe, -0.12+0.3*qe, 1.32-0.12*qe);
+  p.mix=1; return p;
+}
+function camAt(t){
+  t=Math.max(0, Math.min(CDUR-.01, t));
+  const si=shotIndex(t), local=t-SHOTS[si], BL=1.6;
+  let p=rawPose(si, t);
+  if(si>0 && si<5 && local<BL){                        /* weld shot boundaries */
+    p=mixPose(rawPose(si-1, SHOTS[si]), p, eC(local/BL)); p.mix=0;
+  }
+  return p;
+}
+function cineStain(kind){
+  const F=F2;
+  for(let i=0;i<N;i++){
+    const k=state.keys[i];
+    let c=state.colorOf.get(k)||MUTED, a=.92;
+    if(kind==='isoA' || kind==='isoB'){
+      const kk = kind==='isoA'? F.T1.k : F.T2.k;
+      if(k!==kk){ c=MUTED; a=.14; }
+    } else if(kind==='mondo'){
+      if(k===F.M.terr.k && F.mKeys[i]===F.M.g){ /* carriers keep their full stain */ }
+      else if(k===F.M.terr.k){ a=.5; }
+      else { c=MUTED; a=.12; }
+    }
+    tmpC.set(c);
+    colT[i*3]=tmpC.r; colT[i*3+1]=tmpC.g; colT[i*3+2]=tmpC.b;
+    alpT[i]=a;
+  }
+  stainStart=performance.now();
+}
+function shotEnter(si){
+  cinema.shot=si; cinema.peak=0; cinema.half=false;
+  uNBtarget = si===2 ? 0.3 : 1;   /* the tracking shot lives inside the near field: keep it crisp */
+  console.log('[flight] shot '+(si+1)+' t='+cinema.t.toFixed(2)+' cam='+
+    camera.position.toArray().map(v=>v.toFixed(1)).join(','));
+  if(si===3) cineStain('mondo');
+  else if(si===4) cineStain('isoA');
+  else cineStain('none');
+}
+function renderCap(idx){
   const cap=el('cinecap'), card=el('cinecard');
-  if(idx<0){ cap.classList.remove('show'); card.classList.remove('show'); return; }
-  const c=CAPS[idx];
+  if(idx<0 || !F2.ok){ cap.classList.remove('show'); card.classList.remove('show'); return; }
+  const c=F2.caps[idx], b=c.bFn? c.bFn() : c.b;
   if(c.card){
-    card.querySelector('.bt').innerHTML=c.a; card.querySelector('.bs').textContent=c.b;
+    card.querySelector('.bt').innerHTML=c.a; card.querySelector('.bs').textContent=b;
     card.classList.add('show'); cap.classList.remove('show');
   } else {
     cap.querySelector('.cc1').innerHTML=c.a;
-    const s2=cap.querySelector('.cc2'); s2.textContent=c.b; s2.style.display=c.b?'block':'none';
+    const s2=cap.querySelector('.cc2'); s2.textContent=b; s2.style.display=b?'block':'none';
     cap.classList.add('show'); card.classList.remove('show');
   }
+}
+function captionsGate(t){
+  let idx=-1;
+  for(let i=0;i<F2.caps.length;i++) if(t>=F2.caps[i].t0 && t<F2.caps[i].t1){ idx=i; break; }
+  pendingCap=idx;
+  if(pendingCap===capActive) return;
+  const slow = cinema.speed <= 0.25*cinema.peak + 0.02;   /* captions land as the camera settles */
+  if(pendingCap<0 || slow || reduceMotion){ capActive=pendingCap; renderCap(capActive); }
 }
 function sizeBars(){
   const H=cinema.on? Math.min(innerHeight*.16, Math.max(0,(innerHeight-innerWidth/2.39)/2)) : 0;
   document.querySelectorAll('#cinebars .bar').forEach(b=>b.style.height=H+'px');
   el('cinecap').style.bottom=(H+28)+'px';
+  el('compass').style.bottom=(cinema.on? H+14 : 18)+'px';
+  el('axisbadge').style.bottom=(cinema.on? H+14 : 52)+'px';
+  const sb=el('scalebar');
+  sb.style.bottom=(cinema.on? H+16 : 18)+'px';
+  sb.style.left=cinema.on? '110px' : '50%';
+  sb.style.transform=cinema.on? 'none' : 'translateX(-50%)';
 }
 function cinemaStart(){
   if(cinema.on) return;
   if(tourI>=0) tourExit();
-  hideTerrCard();
-  cineSaved={ mode:state.mode, level:state.level, iso:state.isolate, globe:globeOn,
-    tx:ctl.target.x, ty:ctl.target.y, tz:ctl.target.z, dist:ctl.dist, azim:ctl.azim, polar:ctl.polar,
-    ttx:ctl.tTarget.x, tty:ctl.tTarget.y, ttz:ctl.tTarget.z, tDist:ctl.tDist, tAzim:ctl.tAzim, tPolar:ctl.tPolar };
+  hideTerrCard(); tween=null;
+  cineSaved={ mode:state.mode, level:state.level, iso:state.isolate };
   if (globeOn) setGlobe(false, true);
   if(state.mode!=='site'){
     state.mode='site';
@@ -1390,20 +1463,40 @@ function cinemaStart(){
     el('depthrow').style.display='none'; computeGroups();
   }
   state.isolate=null; repaint(); buildLabels();
-  buildFlight();
+  buildFlight2();
   cinema.on=true; cinema.t=0; cinema.paused=false; cinema.slideI=0; cinema.slideTimer=0;
-  capActive=-2; uNBtarget=1; fling.vA=0; fling.vP=0;
+  cinema.shot=-1; cinema.half=false; cinema.speed=0; cinema.peak=0; cinema.justSeeked=true;
+  capActive=-2; pendingCap=-2; uNBtarget=1; fling.vA=0; fling.vP=0;
   document.body.classList.add('cinema'); document.body.classList.remove('cinehide');
   sizeBars();
-  if(reduceMotion) cineSeek(SLIDE_T[0]);
+  el('scalebar').classList.add('show');
+  if(reduceMotion) cinema.t=SLIDE_T[0];
 }
-function cineSeek(t){ cinema.t=Math.max(0, Math.min(CDUR-.05, t)); capActive=-2; }
+function cineSeek(t){
+  cinema.t=Math.max(0, Math.min(CDUR-.05, t));
+  capActive=-2; pendingCap=-2; cinema.justSeeked=true; cinema.peak=0;
+  const si=shotIndex(cinema.t);
+  if(si!==cinema.shot) shotEnter(si);
+  else if(si===4 && cinema.t<56.25 && cinema.half){ cinema.half=false; cineStain('isoA'); }
+}
 function cinemaEnd(natural){
   if(!cinema.on) return;
   cinema.on=false; uNBtarget=0;
   document.body.classList.remove('cinema'); document.body.classList.remove('cinehide');
-  sizeBars();
   el('cinecap').classList.remove('show'); el('cinecard').classList.remove('show');
+  el('scalebar').classList.remove('show');
+  monorailSet(null);
+  /* hand the camera over AT THE CURRENT POSE (Nextstrain rule) */
+  const onG = globeMix>=.5;
+  globeMix = onG?1:0; globeTarget=globeMix; mat.uniforms.uGlobe.value=globeMix;
+  applyProjFlags(onG); syncGlobeVis();
+  const dvec=camera.position.clone().sub(lookPt);
+  const d=Math.max(distMin+2, dvec.length());
+  ctl.tTarget.set(lookPt.x, 0, lookPt.z); clampTarget(); ctl.target.copy(ctl.tTarget);
+  ctl.dist=d; ctl.tDist=d;
+  ctl.azim=Math.atan2(dvec.x, dvec.z); ctl.tAzim=ctl.azim;
+  ctl.polar=Math.min(polarMax, Math.max(.14, Math.acos(Math.max(-1, Math.min(1, dvec.y/d)))));
+  ctl.tPolar=ctl.polar;
   const s=cineSaved; cineSaved=null;
   if(s){
     if(state.mode!==s.mode){
@@ -1414,17 +1507,12 @@ function cinemaEnd(natural){
     state.isolate=s.iso;
     if(state.isolate!=null && !state.colorOf.has(state.isolate)) state.isolate=null;
     repaint(); buildLabels();
-    if(natural) goHome(true);   /* flight ends exactly at the home framing */
-    else {
-      if (s.globe) setGlobe(true, true);
-      ctl.target.set(s.tx,s.ty,s.tz); ctl.dist=s.dist; ctl.azim=s.azim; ctl.polar=s.polar;
-      ctl.tTarget.set(s.ttx,s.tty,s.ttz); ctl.tDist=s.tDist; ctl.tAzim=s.tAzim; ctl.tPolar=s.tPolar;
-    }
   }
+  sizeBars(); badgeSet(''); fling.vA=0; fling.vP=0;
   lastInteract=performance.now();
 }
 function cinemaFrame(dt){
-  if(reduceMotion){                 /* slideshow of the same views instead of motion */
+  if(reduceMotion){                 /* the same seven views, as stills */
     cinema.slideTimer+=dt;
     if(cinema.slideTimer>4.6){
       cinema.slideTimer=0; cinema.slideI++;
@@ -1433,14 +1521,32 @@ function cinemaFrame(dt){
     }
   } else if(!cinema.paused) cinema.t+=dt;
   if(cinema.t>=CDUR){ cinemaEnd(true); return; }
-  const t=cinema.t, u=uMap(t);
-  camera.position.copy(posCurve.getPoint(u));
-  lookPt.copy(lookCurve.getPoint(u));
-  camera.lookAt(lookPt);
-  camera.rotateZ(rollMap(t));
-  const fb=fogMap(t), d=camera.position.distanceTo(lookPt);
-  setFog((d*1.05+40)*fb, (d*2.4+150)*fb);
-  captions(t);
+  const t=cinema.t, si=shotIndex(t);
+  if(si!==cinema.shot) shotEnter(si);
+  if(cinema.shot===4 && !cinema.half && t>=56.25){ cinema.half=true; cineStain('isoB'); }
+  const p=camAt(t);
+  camera.position.set(p.cx, p.cy, p.cz);
+  lookPt.set(p.lx, p.ly, p.lz);
+  camera.lookAt(lookPt);                               /* no roll: roll disorients */
+  if(p.mix!==globeMix){ globeMix=p.mix; mat.uniforms.uGlobe.value=p.mix; syncGlobeVis(); }
+  const d=camera.position.distanceTo(lookPt);
+  setFog(d*1.05+40, d*2.4+150);
+  if(cinema.justSeeked){ prevCam.copy(camera.position); cinema.justSeeked=false; }
+  cinema.speed = camera.position.distanceTo(prevCam)/Math.max(dt, 1e-3);
+  prevCam.copy(camera.position);
+  cinema.peak = Math.max(cinema.peak*0.995, cinema.speed);
+  captionsGate(t);
+  const azc=Math.atan2(camera.position.x-lookPt.x, camera.position.z-lookPt.z);
+  compassUpdate(azc);
+  const elev=Math.asin(Math.max(-1, Math.min(1,(p.cy-p.ly)/Math.max(1e-3,d))))*180/Math.PI;
+  badgeSet( p.mix>.5 ? globeBadgeText()
+          : elev>20 ? 'presentation axis · height is legibility, not data' : '');
+  if(!reduceMotion && p.mix<.5 && !cinema.paused && cinema.speed>2){
+    const pts=[]; for(let k2=0;k2<=20;k2++){ const pp=camAt(t+k2*0.15); pts.push({x:pp.cx, z:pp.cz}); }
+    monorailSet(pts);
+  } else monorailSet(null);
+  scalebarTick(performance.now());
+  knnTick(160);
 }
 el('playCinema').onclick=cinemaStart;
 el('cineclick').onclick=()=>cinemaEnd(false);
@@ -1448,8 +1554,10 @@ addEventListener('keydown', e=>{
   if(!cinema.on) return;
   if(e.key==='Escape') cinemaEnd(false);
   else if(e.key===' '){ e.preventDefault(); cinema.paused=!cinema.paused; }
-  else if(e.key==='ArrowRight'){ e.preventDefault(); const nx=SHOTS.find(x=>x>cinema.t+.01); cineSeek(nx!=null?nx:CDUR); }
-  else if(e.key==='ArrowLeft'){ e.preventDefault(); let pv=0; for(const x of SHOTS) if(x<cinema.t-.5) pv=x; cineSeek(pv); }
+  else if(e.key==='ArrowRight'){ e.preventDefault(); const nx=SHOTS.find(x=>x>cinema.t+.01);
+    cineSeek(nx!=null? Math.min(nx, CDUR-.05) : CDUR-.05); cinema.paused=true; }
+  else if(e.key==='ArrowLeft'){ e.preventDefault(); let pv=0; for(const x of SHOTS) if(x<cinema.t-.5) pv=x;
+    cineSeek(pv); cinema.paused=true; }
   else if(e.key==='h'||e.key==='H') document.body.classList.toggle('cinehide');
 });
 window.__cinema={ start:cinemaStart, exit:()=>cinemaEnd(false), seek:t=>{ if(cinema.on) cineSeek(t); } };
@@ -1472,14 +1580,20 @@ function syncGlobeVis(){
   if (born>=1) contourGroup.children.forEach(c=>c.material.opacity=.55*(1-globeMix));
   contourGroup.visible=globeMix<.998;
 }
-function setGlobe(on, snap){
-  if (globeOn===on && !snap) return;
-  globeOn=on; globeTarget=on?1:0;
+function applyProjFlags(on){
+  globeOn=on;
   document.querySelectorAll('#viewrow button').forEach(b=>b.classList.toggle('on',(b.dataset.view==='globe')===on));
   const rel=el('relief');
   rel.disabled=on; rel.parentElement.style.opacity=on?.45:'';
-  if (on && state.relief){ rel.checked=false; state.relief=false; el('reliefnote').style.display='none'; repaint(); }
+  let cleared=false;
+  if (on && state.relief){ rel.checked=false; state.relief=false; el('reliefnote').style.display='none'; cleared=true; }
   polarMax = on? 2.75 : 1.36; distMin = on? 56 : 7;
+  return cleared;
+}
+function setGlobe(on, snap){
+  if (globeOn===on && !snap) return;
+  globeTarget=on?1:0;
+  if (applyProjFlags(on)) repaint();
   fling.vA=0; fling.vP=0;
   if (on){
     ctl.tTarget.set(GC.x, 0, GC.z);
@@ -1625,7 +1739,7 @@ function frame(){
     tipX+=(tipTX-tipX)*Math.min(1, dt*16); tipY+=(tipTY-tipY)*Math.min(1, dt*16);
     tip.style.left=tipX+'px'; tip.style.top=tipY+'px';
   }
-  if (globeMix!==globeTarget){       /* flat <-> globe morph */
+  if (!cinema.on && globeMix!==globeTarget){   /* flat <-> globe morph (the flight drives its own) */
     if (reduceMotion) globeMix=globeTarget;
     else { globeMix+=(globeTarget-globeMix)*(1-Math.exp(-dt*2.6));
       if (Math.abs(globeTarget-globeMix)<.001) globeMix=globeTarget; }
