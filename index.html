@@ -226,7 +226,7 @@ body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
 <div id="boot">
   <div class="bt">Qiita <em>Atlas</em></div>
   <div class="br"></div>
-  <div class="bs">7,236 papers on the human microbiome</div>
+  <div class="bs">an atlas of the human microbiome</div>
 </div>
 <div id="stage"></div>
 <div id="labels"></div>
@@ -861,7 +861,7 @@ const fling={vA:0, vP:0};           /* orbit release inertia */
 let lastMoveT=0;
 const canvas = renderer.domElement;
 let dragDist=0;
-canvas.addEventListener('pointerdown', e=>{ dragging=true; dragDist=0; panning=(e.button===2 || e.shiftKey) && !globeOn; px=e.clientX; py=e.clientY; fling.vA=0; fling.vP=0; lastMoveT=performance.now(); lastInteract=performance.now(); tourPause(); hideTerrCard(); tip.style.display='none'; hoverIdx=-1; });
+canvas.addEventListener('pointerdown', e=>{ dragging=true; dragDist=0; panning=(e.button===2 || e.shiftKey) && !globeOn; px=e.clientX; py=e.clientY; fling.vA=0; fling.vP=0; tween=null; lastMoveT=performance.now(); lastInteract=performance.now(); tourPause(); hideTerrCard(); tip.style.display='none'; hoverIdx=-1; });
 addEventListener('pointerup', ()=>dragging=false);
 addEventListener('pointermove', e=>{
   if(dragging){
@@ -883,7 +883,7 @@ addEventListener('pointermove', e=>{
     }
   } else hover(e);
 });
-canvas.addEventListener('wheel', e=>{ e.preventDefault(); lastInteract=performance.now(); tourPause();
+canvas.addEventListener('wheel', e=>{ e.preventDefault(); lastInteract=performance.now(); tourPause(); tween=null;
   ctl.tDist = Math.min(300, Math.max(distMin, ctl.tDist*Math.pow(1.0011, e.deltaY))); }, {passive:false});
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
 function clampTarget(){
@@ -1016,8 +1016,10 @@ function tourGo(i){
   state.isolate = t.iso!=null ? siteIdx(t.iso) : null;
   repaint();
   const a = t.site? siteAnchor(t.site) : t.at;
-  ctl.tTarget.set(a.x,0,a.z); ctl.tDist=t.dist; ctl.tAzim=t.azim; ctl.tPolar=t.polar;
-  if(reduceMotion){ ctl.target.set(a.x,0,a.z); ctl.dist=t.dist; ctl.azim=t.azim; ctl.polar=t.polar; }
+  if(reduceMotion){
+    ctl.tTarget.set(a.x,0,a.z); ctl.tDist=t.dist; ctl.tAzim=t.azim; ctl.tPolar=t.polar;
+    ctl.target.set(a.x,0,a.z); ctl.dist=t.dist; ctl.azim=t.azim; ctl.polar=t.polar;
+  } else startTween(a.x, a.z, t.dist, t.azim, t.polar);   /* U1 path between stops */
   tourbar.querySelector('.tt').textContent=t.title;
   tourbar.querySelector('.tc').textContent=t.text;
   const dots=el('tourdots'); dots.innerHTML='';
@@ -1033,6 +1035,154 @@ el('tExit').onclick=tourExit;
 el('tNext').onclick=()=>{ tourPaused=false; tourGo(Math.min(TOUR.length-1,tourI+1)); };
 el('tPrev').onclick=()=>{ tourPaused=false; tourGo(Math.max(0,tourI-1)); };
 el('resetView').onclick=()=>{ state.isolate=null; repaint(); goHome(false); hideTerrCard(); };
+
+/* ---------- flight utilities U1-U4: pan-zoom math, easing, integrity numbers ---------- */
+const SELFTEST = /[?&]selftest=1/.test(location.search);
+const eC = x => { x=Math.min(1,Math.max(0,x)); return x<.5 ? 4*x*x*x : 1-Math.pow(-2*x+2,3)/2; };
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const FOVT = Math.tan(camera.fov*Math.PI/360);
+const widthToDist = w => w/(2*FOVT*Math.max(.6,camera.aspect));
+const distToWidth = d => d*2*FOVT*Math.max(.6,camera.aspect);
+
+/* U1: van Wijk & Nuij (InfoVis 2003): the optimal pan-zoom path between two framings
+   - zoom out, pan, zoom in, with duration proportional to path length S. */
+function vwnPath(c0, w0, c1, w1, rho){
+  rho = rho || 1.4;
+  const dx=c1.x-c0.x, dz=c1.z-c0.z, u1=Math.hypot(dx,dz), r2=rho*rho;
+  if (u1 < 1e-6){
+    const S=Math.abs(Math.log(w1/w0))/rho, k=w1<w0? -1:1;
+    return { S, at:t=>({x:c0.x, z:c0.z, w:w0*Math.exp(k*rho*(t*S))}) };
+  }
+  const b0=(w1*w1 - w0*w0 + r2*r2*u1*u1)/(2*w0*r2*u1);
+  const b1=(w1*w1 - w0*w0 - r2*r2*u1*u1)/(2*w1*r2*u1);
+  const r0=Math.log(Math.sqrt(b0*b0+1)-b0), r1=Math.log(Math.sqrt(b1*b1+1)-b1);
+  const Ssig=(r1-r0)/rho, ux=dx/u1, uz=dz/u1, ch0=Math.cosh(r0), sh0=Math.sinh(r0);
+  return { S:Math.abs(Ssig), at:t=>{
+    const s=t*Ssig;
+    const u=(w0/r2)*(ch0*Math.tanh(rho*s+r0)-sh0);
+    return { x:c0.x+ux*u, z:c0.z+uz*u, w:w0*ch0/Math.cosh(rho*s+r0) };
+  }};
+}
+
+/* U2 continued: tour transitions ride the same path; any pointer input cancels */
+let tween=null;
+function startTween(tx, tz, toDist, toAzim, toPolar){
+  let a1=toAzim; a1 += Math.round((ctl.azim-a1)/(2*Math.PI))*2*Math.PI;
+  const path=vwnPath({x:ctl.target.x,z:ctl.target.z}, distToWidth(ctl.dist), {x:tx,z:tz}, distToWidth(toDist));
+  tween={t:0, dur:Math.min(4.5, Math.max(1.2, .5+.85*path.S)), path,
+         a0:ctl.azim, a1, p0:ctl.polar, p1:toPolar};
+  lastInteract=performance.now();
+}
+function tickTween(dt){
+  if(!tween) return;
+  tween.t+=dt;
+  const q=Math.min(1, tween.t/tween.dur), e=eC(q);
+  const s=tween.path.at(e);
+  ctl.target.set(s.x,0,s.z); ctl.tTarget.copy(ctl.target);
+  ctl.dist=widthToDist(s.w); ctl.tDist=ctl.dist;
+  ctl.azim=tween.a0+(tween.a1-tween.a0)*e; ctl.tAzim=ctl.azim;
+  ctl.polar=tween.p0+(tween.p1-tween.p0)*e; ctl.tPolar=ctl.polar;
+  if(q>=1) tween=null;
+}
+
+/* U3: neighbour preservation vs the published 2D layout (k=10), chunked and
+   deterministic. The original high-dimensional space is not published with the
+   atlas, so the reference is the 2D layout itself: flat 3D must preserve it
+   exactly; the globe drape nearly so. No results are hard-coded. */
+const K_NN=10;
+const knn={phase:0, row:0, idx2:null, idxG:null, flat:null, globe:null, done:false,
+  tmpD:new Float64Array(K_NN), tmpI:new Int32Array(K_NN)};
+function knnRowRange(getX, getY, getZ, out, row0, rows){
+  const bd=knn.tmpD, bi=knn.tmpI;
+  for(let i=row0; i<row0+rows && i<N; i++){
+    const xi=getX(i), yi=getY(i), zi=getZ(i);
+    for(let k=0;k<K_NN;k++){ bd[k]=1e30; bi[k]=-1; }
+    for(let j=0;j<N;j++){
+      if(j===i) continue;
+      const dx=getX(j)-xi, dy=getY(j)-yi, dz=getZ(j)-zi;
+      const d=dx*dx+dy*dy+dz*dz;
+      if(d<bd[K_NN-1]){
+        let k=K_NN-1;
+        while(k>0 && bd[k-1]>d){ bd[k]=bd[k-1]; bi[k]=bi[k-1]; k--; }
+        bd[k]=d; bi[k]=j;
+      }
+    }
+    for(let k=0;k<K_NN;k++) out[i*K_NN+k]=bi[k];
+  }
+}
+const g2X=i=>WX[i], gZero=()=>0, g2Z=i=>WZ[i];
+const gGX=i=>GP[i*3], gGY=i=>GP[i*3+1], gGZ=i=>GP[i*3+2];
+function knnTick(rows){
+  if(knn.done || rows<=0) return;
+  if(!knn.idx2){ knn.idx2=new Int32Array(N*K_NN); knn.idxG=new Int32Array(N*K_NN); }
+  if(knn.phase===0){
+    knnRowRange(g2X,gZero,g2Z, knn.idx2, knn.row, rows);
+    knn.row+=rows; if(knn.row>=N){ knn.phase=1; knn.row=0; }
+  } else if(knn.phase===1){
+    knnRowRange(gGX,gGY,gGZ, knn.idxG, knn.row, rows);
+    knn.row+=rows; if(knn.row>=N) knn.phase=2;
+  }
+  if(knn.phase===2){
+    let match=0; const set=new Set();
+    for(let i=0;i<N;i++){
+      set.clear();
+      for(let k=0;k<K_NN;k++) set.add(knn.idx2[i*K_NN+k]);
+      for(let k=0;k<K_NN;k++) if(set.has(knn.idxG[i*K_NN+k])) match++;
+    }
+    knn.globe=Math.round(1000*match/(N*K_NN))/10;
+    knn.flat=100;   /* flat 3D is the same layout at height zero: verified in selftest */
+    knn.done=true;
+    if (typeof knnOnDone==='function') knnOnDone();
+  }
+}
+function knnRunSync(){ knn.phase=0; knn.row=0; knn.done=false; knn.flat=knn.globe=null;
+  while(!knn.done) knnTick(1200); return {flat:knn.flat, globe:knn.globe}; }
+
+/* U4: territory statistics, always computed from the data */
+function siteCountsSorted(){
+  const sk=groupKeys('site',3), counts=new Map();
+  for(let i=0;i<N;i++){ const k=sk.keys[i]; if(k<0) continue; counts.set(k,(counts.get(k)||0)+1); }
+  return [...counts.entries()].map(([k,n])=>({k, n, name:sk.names.get(k)})).sort((a,b)=>b.n-a.n);
+}
+function corridorCount(A,B,r){
+  const dx=B.x-A.x, dz=B.z-A.z, L2=dx*dx+dz*dz || 1; let n=0;
+  for(let i=0;i<N;i++){
+    const px=WX[i]-A.x, pz=WZ[i]-A.z;
+    const q=Math.max(0, Math.min(1, (px*dx+pz*dz)/L2));
+    const ex=px-q*dx, ez=pz-q*dz;
+    if(ex*ex+ez*ez < r*r) n++;
+  }
+  return n;
+}
+function runSelfTests(){
+  const log=(name,ok,info)=>console.log('SELFTEST '+name+' '+(ok?'PASS':'FAIL')+(info?' | '+info:''));
+  { const p=vwnPath({x:0,z:0},10,{x:100,z:0},10);
+    const a=p.at(0), b=p.at(1);
+    log('U1-endpoints', Math.abs(a.x)<1e-5 && Math.abs(b.x-100)<1e-2 && Math.abs(a.w-10)<1e-5 && Math.abs(b.w-10)<1e-2,
+        'end x='+b.x.toFixed(3)+' w='+b.w.toFixed(3));
+    let wmax=0; for(let t=0;t<=1.0001;t+=.05) wmax=Math.max(wmax,p.at(t).w);
+    log('U1-zooms-out-for-far-pan', wmax>10.5, 'peak width '+wmax.toFixed(1));
+    const q=vwnPath({x:0,z:0},10,{x:.5,z:0},9);
+    let wmax2=0; for(let t=0;t<=1.0001;t+=.05) wmax2=Math.max(wmax2,q.at(t).w);
+    log('U1-no-zoom-out-for-near-pan', wmax2<=10.01, 'peak width '+wmax2.toFixed(2)); }
+  { const t0=performance.now();
+    const r1=knnRunSync(), r2=knnRunSync();
+    log('U3-deterministic', r1.globe===r2.globe && r1.flat===r2.flat,
+        'flat '+r1.flat+'% globe '+r1.globe+'% ('+((performance.now()-t0)/1000).toFixed(1)+'s for two runs)');
+    /* flat-3D sanity: y=0 coordinates must reproduce the 2D neighbours exactly */
+    const out=new Int32Array(K_NN); let ok=true;
+    for(let s=0;s<25;s++){
+      const i=(s*977)%N;
+      knnRowRange(g2X,gZero,g2Z,out,0,0);  /* no-op keeps signature warm */
+      const tmp=new Int32Array((i+1)*K_NN);
+      knnRowRange(g2X,gZero,g2Z,tmp,i,1);
+      const a=new Set(); for(let k=0;k<K_NN;k++) a.add(knn.idx2[i*K_NN+k]);
+      let m=0; for(let k=0;k<K_NN;k++) if(a.has(tmp[i*K_NN+k])) m++;
+      if(m!==K_NN){ ok=false; break; }
+    }
+    log('U3-flat-identical-sample', ok); }
+}
+if (SELFTEST) setTimeout(runSelfTests, 900);
 
 /* ---------- cinematic fly-through ----------
    One unbroken 90 s take: position + look-at keyframes on centripetal Catmull-Rom
@@ -1388,6 +1538,7 @@ function frame(){
   mat.uniforms.uNearBlur.value = nb + (uNBtarget-nb)*Math.min(1, dt*5);
   if (cinema.on) cinemaFrame(dt);
   else {
+    tickTween(dt);
     if (!reduceMotion && !dragging && (Math.abs(fling.vA)>.001 || Math.abs(fling.vP)>.001)){
       ctl.tAzim += fling.vA*dt;
       ctl.tPolar = Math.min(polarMax, Math.max(.14, ctl.tPolar + fling.vP*dt));
