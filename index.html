@@ -393,11 +393,43 @@ let neatMat;
 
 /* globe furniture: a paper sphere with its own graticule */
 const globeGroup = new THREE.Group(); globeGroup.visible=false; scene.add(globeGroup);
-let sphereMat, globeGratMat;
+let sphereMat, globeGratMat, shadowMat;
 (function(){
-  sphereMat = new THREE.MeshBasicMaterial({color:0xffffff, vertexColors:true, transparent:true, opacity:0, fog:true});
+  /* engraved-globe shading: limb darkening + ink rim at the silhouette (Rumsey/GitHub-globe lineage) */
+  sphereMat = new THREE.ShaderMaterial({
+    transparent:true, depthWrite:false,
+    uniforms:{ uOpacity:{value:0}, uFogColor:{value:new THREE.Color(PAPER)}, uFogNear:{value:160}, uFogFar:{value:330},
+      uInk:{value:new THREE.Color(0x4A4639)} },
+    vertexShader:`attribute vec3 aTint; varying vec3 vT, vWN, vWP; varying float vD;
+      void main(){ vT=aTint;
+        vec4 wp = modelMatrix * vec4(position,1.0); vWP=wp.xyz;
+        vWN = normalize(mat3(modelMatrix) * normal);
+        vec4 mv = viewMatrix * wp; vD = -mv.z;
+        gl_Position = projectionMatrix * mv; }`,
+    fragmentShader:`varying vec3 vT, vWN, vWP; varying float vD;
+      uniform float uOpacity, uFogNear, uFogFar; uniform vec3 uFogColor, uInk;
+      void main(){
+        float ndv = clamp(dot(normalize(vWN), normalize(cameraPosition - vWP)), 0.0, 1.0);
+        float limb = pow(1.0 - ndv, 2.2);
+        vec3 c = vT * (1.0 - 0.16*limb);
+        float rim = smoothstep(0.14, 0.0, ndv);
+        c = mix(c, uInk, rim*0.45);
+        float fog = smoothstep(uFogNear, uFogFar, vD);
+        gl_FragColor = vec4(mix(c, uFogColor, fog), uOpacity); }`
+  });
   const sph = new THREE.Mesh(new THREE.SphereGeometry(GR-0.5, 96, 64), sphereMat);
   sph.position.set(GC.x, 0, GC.z); sph.renderOrder=1; globeGroup.add(sph);
+  /* soft ground shadow so the globe sits in space instead of floating */
+  shadowMat = new THREE.ShaderMaterial({ transparent:true, depthWrite:false,
+    uniforms:{ uO:{value:0} },
+    vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`varying vec2 vUv; uniform float uO;
+      void main(){ float r=length(vUv-vec2(.5))*2.0;
+        float a=(1.0-smoothstep(.15,1.0,r))*.16*uO;
+        gl_FragColor=vec4(vec3(.42,.40,.33), a); }`});
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(GR*1.25, 48), shadowMat);
+  shadow.rotation.x=-Math.PI/2; shadow.scale.x=1.25;
+  shadow.position.set(GC.x, -GR-5, GC.z); shadow.renderOrder=0; globeGroup.add(shadow);
   /* a faint continent: tint the sphere where the map is dense (the .09 band, filled) */
   (function(){
     const sp=sph.geometry.attributes.position, vc=new Float32Array(sp.count*3);
@@ -415,7 +447,7 @@ let sphereMat, globeGratMat;
       const k=1-.09*t;
       vc[i*3]=br*k; vc[i*3+1]=bg*k; vc[i*3+2]=bb*k;
     }
-    sph.geometry.setAttribute('color', new THREE.BufferAttribute(vc,3));
+    sph.geometry.setAttribute('aTint', new THREE.BufferAttribute(vc,3));
   })();
   const v=[], RG=GR*1.002;
   for(let la=-75; la<=75; la+=15){ const lr=la*Math.PI/180, r=RG*Math.cos(lr), y=RG*Math.sin(lr);
@@ -484,13 +516,20 @@ geo.setAttribute('aAlpha', new THREE.BufferAttribute(alp,1));
 geo.setAttribute('aSize', new THREE.BufferAttribute(siz,1));
 const mat = new THREE.ShaderMaterial({
   transparent:true, depthWrite:false,
-  uniforms:{ uScale:{value: innerHeight*.5}, uFogColor:{value:new THREE.Color(PAPER)}, uFogNear:{value:160}, uFogFar:{value:330}, uNearBlur:{value:0}, uGlobe:{value:0} },
+  uniforms:{ uScale:{value: innerHeight*.5}, uFogColor:{value:new THREE.Color(PAPER)}, uFogNear:{value:160}, uFogFar:{value:330}, uNearBlur:{value:0}, uGlobe:{value:0},
+    uGlobeLight:{value:0}, uGC:{value:new THREE.Vector3(GC.x,0,GC.z)} },
   vertexShader:`attribute vec3 aColor, aGlobe; attribute float aAlpha, aSize;
-    varying vec3 vC; varying float vA, vDepth, vNB; uniform float uScale, uNearBlur, uGlobe;
-    void main(){ vC=aColor; vA=aAlpha;
-      vec4 mv = modelViewMatrix * vec4(mix(position, aGlobe, uGlobe),1.0);
+    varying vec3 vC; varying float vA, vDepth, vNB; uniform float uScale, uNearBlur, uGlobe, uGlobeLight;
+    uniform vec3 uGC;
+    void main(){ vA=aAlpha;
+      vec3 pMix = mix(position, aGlobe, uGlobe);
+      vec4 mv = modelViewMatrix * vec4(pMix,1.0);
       vDepth = -mv.z;
       vNB = uNearBlur * (1.0 - smoothstep(9.0, 34.0, vDepth));
+      vec3 cc = aColor;
+      float wrap = clamp(dot(normalize(pMix-uGC), normalize(cameraPosition-uGC))*.5+.5, 0.0, 1.0);
+      cc *= mix(1.0, 0.82 + 0.18*wrap, uGlobeLight);
+      vC = cc;
       gl_PointSize = clamp(aSize * uScale / vDepth, 1.3, 10.0) * (1.0 + 1.5*vNB);
       gl_Position = projectionMatrix * mv; }`,
   fragmentShader:`varying vec3 vC; varying float vA, vDepth, vNB;
@@ -701,11 +740,14 @@ placeLabels.dirty=true;
 const ctl = { target:new THREE.Vector3(0,0,0), dist:112, azim:0.0, polar:0.72,
   tTarget:new THREE.Vector3(0,0,0), tDist:112, tAzim:0.0, tPolar:0.72 };
 const HOME = {x:CENTER.x,z:CENTER.z,dist:112,azim:-.12,polar:.72};
-function applyCam(){
-  ctl.target.lerp(ctl.tTarget, .10);
-  const fn=ctl.dist*1.05+40, ff=ctl.dist*2.4+150;
+function setFog(fn, ff){
   scene.fog.near=fn; scene.fog.far=ff;
   mat.uniforms.uFogNear.value=fn; mat.uniforms.uFogFar.value=ff;
+  sphereMat.uniforms.uFogNear.value=fn; sphereMat.uniforms.uFogFar.value=ff;
+}
+function applyCam(){
+  ctl.target.lerp(ctl.tTarget, .10);
+  setFog(ctl.dist*1.05+40, ctl.dist*2.4+150);
   ctl.dist += (ctl.tDist-ctl.dist)*.10;
   ctl.azim += (ctl.tAzim-ctl.azim)*.10;
   ctl.polar += (ctl.tPolar-ctl.polar)*.10;
@@ -1056,9 +1098,7 @@ function cinemaFrame(dt){
   camera.lookAt(lookPt);
   camera.rotateZ(rollMap(t));
   const fb=fogMap(t), d=camera.position.distanceTo(lookPt);
-  const fn=(d*1.05+40)*fb, ff=(d*2.4+150)*fb;
-  scene.fog.near=fn; scene.fog.far=ff;
-  mat.uniforms.uFogNear.value=fn; mat.uniforms.uFogFar.value=ff;
+  setFog((d*1.05+40)*fb, (d*2.4+150)*fb);
   captions(t);
 }
 el('playCinema').onclick=cinemaStart;
@@ -1076,8 +1116,10 @@ window.__cinema={ start:cinemaStart, exit:()=>cinemaEnd(false), seek:t=>{ if(cin
 /* ---------- globe projection toggle ---------- */
 function syncGlobeVis(){
   /* the sphere solidifies only once the points have landed, so the morph never swallows them */
-  sphereMat.opacity=.98*Math.pow(globeMix,3);
+  sphereMat.uniforms.uOpacity.value=.98*Math.pow(globeMix,3);
   sphereMat.depthWrite = globeMix>.97;
+  shadowMat.uniforms.uO.value=globeMix;
+  mat.uniforms.uGlobeLight.value=globeMix;
   globeGratMat.opacity=.5*globeMix;
   globeContourMats.forEach(m=>m.opacity=.55*globeMix);
   globeGroup.visible=globeMix>.002;
