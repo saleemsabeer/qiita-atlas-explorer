@@ -1492,7 +1492,9 @@ function cinemaEnd(natural){
   applyProjFlags(onG); syncGlobeVis();
   const dvec=camera.position.clone().sub(lookPt);
   const d=Math.max(distMin+2, dvec.length());
-  ctl.tTarget.set(lookPt.x, 0, lookPt.z); clampTarget(); ctl.target.copy(ctl.tTarget);
+  ctl.tTarget.set(lookPt.x, 0, lookPt.z);
+  if(!onG) clampTarget();   /* never yank the hand-off pose; the next user pan clamps anyway */
+  ctl.target.copy(ctl.tTarget);
   ctl.dist=d; ctl.tDist=d;
   ctl.azim=Math.atan2(dvec.x, dvec.z); ctl.tAzim=ctl.azim;
   ctl.polar=Math.min(polarMax, Math.max(.14, Math.acos(Math.max(-1, Math.min(1, dvec.y/d)))));
@@ -1560,7 +1562,8 @@ addEventListener('keydown', e=>{
     cineSeek(pv); cinema.paused=true; }
   else if(e.key==='h'||e.key==='H') document.body.classList.toggle('cinehide');
 });
-window.__cinema={ start:cinemaStart, exit:()=>cinemaEnd(false), seek:t=>{ if(cinema.on) cineSeek(t); } };
+window.__cinema={ start:cinemaStart, exit:()=>cinemaEnd(false), seek:t=>{ if(cinema.on) cineSeek(t); },
+  pose:()=>camera.position.toArray(), knn:()=>({flat:knn.flat, globe:knn.globe, done:knn.done}) };
 
 /* ---------- globe projection toggle ---------- */
 function syncGlobeVis(){
