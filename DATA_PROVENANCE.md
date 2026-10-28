@@ -12,7 +12,7 @@ Added, presentation only, all derived from the data above at page load:
 - the camera, tour stops and captions (captions state only counts computed from DATA);
 - colors, typography and UI.
 
-The dataset ships as atlas-data.js, stored gzip-compressed and decoded in the browser; the build script verifies the decoded bytes are identical to the source JSON before the page is written.
+The dataset ships as atlas-data.js as plain JSON; the build script verifies it parses byte-identical to the source data before the page is written.
 
 Nothing scientific was added, removed or changed. In disease, class and topic modes the
 seven largest groups are colored and the rest are muted gray, matching the published
