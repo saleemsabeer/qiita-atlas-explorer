@@ -4,7 +4,7 @@ An interactive 3D presentation of the Qiita Atlas: 7,236 full-text human-microbi
 
 The layout is the published 2D map filmed by a moving camera; the third dimension is presentation, not measurement. The embedded data is byte-verified identical to the published atlas (see DATA_PROVENANCE.md).
 
-**Hosting:** it is one static file. Vercel: import this repo, no build step, output directory `.`. GitHub Pages: Settings, Pages, deploy from branch `main`, root.
+**Hosting:** two static files, no build step. Vercel: import this repo, no build step, output directory `.`. GitHub Pages: Settings, Pages, deploy from branch `main`, root.
 
 **Local:** open `index.html` in a browser (fonts and Three.js load from CDNs).
 
