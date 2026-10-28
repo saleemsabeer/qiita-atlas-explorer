@@ -20,3 +20,5 @@ atlas's legend behaviour; papers whose group is "unclustered" or "none/healthy-c
 are shown muted, not hidden.
 
 - `og-image.png` — a screenshot of the rendered page, committed so link previews (Open Graph) show the map. Presentation only, generated from the page itself.
+
+- Globe projection — the same flat layout mapped onto a sphere (longitude proportional to x, latitude proportional to y) for presentation. The sphere carries no geographic meaning; the papers have no location data.

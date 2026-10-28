@@ -224,7 +224,7 @@ body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
     <p class="sub">A survey of <b id="nAll"></b> full-text papers on the human microbiome, 2010–2026, arranged by similarity of their language. Neighbouring papers study similar things.</p>
     <hr class="rule">
     <p class="sect">Stain the map by</p>
-    <div class="modes">
+    <div class="modes" id="stainrow">
       <button data-mode="site" class="on">Body site<span>7 territories</span></button>
       <button data-mode="mondo">Disease<span>MONDO hierarchy</span></button>
       <button data-mode="group8">Disease class<span>8 curated groups</span></button>
@@ -234,6 +234,11 @@ body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
       <label for="depth">Depth</label>
       <input type="range" id="depth" min="1" max="8" step="1" value="3">
       <output id="depthout">3</output>
+    </div>
+    <p class="sect">Project the map as</p>
+    <div class="modes" id="viewrow">
+      <button data-view="flat" class="on">Flat map<span>the published layout</span></button>
+      <button data-view="globe">Globe<span>same layout, on a sphere</span></button>
     </div>
     <p class="sect">Legend <span style="font-style:normal;font-size:11px">(click to isolate)</span></p>
     <ul id="legend"></ul>
@@ -279,7 +284,7 @@ body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
   <div class="panel">
     <h2>About this map</h2>
     <p>Each of the <b id="abN"></b> points is one full-text paper on the human microbiome, published 2010–2026 in <b id="abJ"></b> journals and linked from the Qiita platform. The arrangement is the paper's published two-dimensional layout, computed from text similarity: papers that use similar language sit near each other.</p>
-    <p><b>The third dimension here is presentation, not measurement.</b> The map is a flat plane filmed by a moving camera. The optional relief mode lifts points by local paper density and says so on screen. The axes have no units.</p>
+    <p><b>The third dimension here is presentation, not measurement.</b> The map is a flat plane filmed by a moving camera. The optional relief mode lifts points by local paper density and says so on screen. The globe view drapes this same flat layout over a sphere — the sphere, like the relief, is presentation, not geography; the papers carry no location data. The axes have no units.</p>
     <p>Every paper keeps its identity: hover for the title, click to open it on PubMed. Disease labels are nodes of the MONDO Disease Ontology, release <b>2026-09-01</b>; body sites use the atlas's seven classes. Colors follow histology stains, the palette microscopists use on human tissue.</p>
     <p>The data embedded in this page is identical to the published atlas. The contour lines and territory labels are derived from point density for reading, nothing scientific was added or changed.</p>
     <p style="margin-bottom:0"><button class="ghost" id="aboutClose">Close</button></p>
@@ -345,6 +350,18 @@ const densAt=(x,z)=>{ const gx=(x-EXT.x0)/gw*G-.5, gz=(z-EXT.z0)/gh*G-.5;
 const DENS = new Float32Array(N);
 for(let i=0;i<N;i++) DENS[i]=Math.sqrt(densAt(WX[i],WZ[i])/dmax);
 
+/* ---------- globe projection (presentation): the same flat layout draped on a sphere ---------- */
+const GR=46, GLON=2.95, GLAT=1.45, GTILT=0.10, GC={x:CENTER.x, z:CENTER.z};
+function toGlobe(wx, wz, out, off){
+  const lon=((wx-(EXT.x0+EXT.x1)/2)/gw)*GLON;
+  const lat=(-(wz-(EXT.z0+EXT.z1)/2)/gh)*GLAT + GTILT;
+  const cl=Math.cos(lat);
+  out[off]=GC.x+GR*cl*Math.sin(lon); out[off+1]=GR*Math.sin(lat); out[off+2]=GC.z+GR*cl*Math.cos(lon);
+}
+const GP = new Float32Array(N*3);
+for(let i=0;i<N;i++) toGlobe(WX[i], WZ[i], GP, i*3);
+let globeOn=false, globeMix=0, globeTarget=0, polarMax=1.36, distMin=7;
+
 /* ---------- three.js scene ---------- */
 const stage = el('stage');
 const renderer = new THREE.WebGLRenderer({antialias:true});
@@ -356,7 +373,8 @@ const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(PAPER, 160, 330);
 const camera = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, .5, 900);
 
-/* neatline + graticule */
+/* neatline + graticule (flat-map furniture) */
+let neatMat;
 (function(){
   const g=new THREE.BufferGeometry(), v=[];
   const seg=(a,b,c,d)=>v.push(a,0,b,c,0,d);
@@ -366,7 +384,29 @@ const camera = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, .5, 900);
   for(let i=1;i<6;i++){ const x=EXT.x0+gw*i/6; seg(x,EXT.z0,x,EXT.z0+t); seg(x,EXT.z1,x,EXT.z1-t); }
   for(let i=1;i<6;i++){ const z=EXT.z0+gh*i/6; seg(EXT.x0,z,EXT.x0+t,z); seg(EXT.x1,z,EXT.x1-t,z); }
   g.setAttribute('position', new THREE.Float32BufferAttribute(v,3));
-  scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({color:0xB3AF9F, transparent:true, opacity:.9})));
+  neatMat = new THREE.LineBasicMaterial({color:0xB3AF9F, transparent:true, opacity:.9});
+  scene.add(new THREE.LineSegments(g, neatMat));
+})();
+
+/* globe furniture: a paper sphere with its own graticule */
+const globeGroup = new THREE.Group(); globeGroup.visible=false; scene.add(globeGroup);
+let sphereMat, globeGratMat;
+(function(){
+  sphereMat = new THREE.MeshBasicMaterial({color:0xECE9DD, transparent:true, opacity:0, fog:true});
+  const sph = new THREE.Mesh(new THREE.SphereGeometry(GR-0.5, 64, 48), sphereMat);
+  sph.position.set(GC.x, 0, GC.z); sph.renderOrder=1; globeGroup.add(sph);
+  const v=[], RG=GR*1.002;
+  for(let la=-75; la<=75; la+=15){ const lr=la*Math.PI/180, r=RG*Math.cos(lr), y=RG*Math.sin(lr);
+    for(let s=0;s<96;s++){ const a0=s/96*2*Math.PI, a1=(s+1)/96*2*Math.PI;
+      v.push(GC.x+r*Math.sin(a0), y, GC.z+r*Math.cos(a0), GC.x+r*Math.sin(a1), y, GC.z+r*Math.cos(a1)); } }
+  for(let lo=0; lo<360; lo+=15){ const o=lo*Math.PI/180;
+    for(let s=0;s<48;s++){ const b0=-Math.PI/2+s/48*Math.PI, b1=-Math.PI/2+(s+1)/48*Math.PI;
+      const c0=RG*Math.cos(b0), c1=RG*Math.cos(b1);
+      v.push(GC.x+c0*Math.sin(o), RG*Math.sin(b0), GC.z+c0*Math.cos(o),
+             GC.x+c1*Math.sin(o), RG*Math.sin(b1), GC.z+c1*Math.cos(o)); } }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(v,3));
+  globeGratMat = new THREE.LineBasicMaterial({color:0xB3AF9F, transparent:true, opacity:0});
+  const lines=new THREE.LineSegments(g, globeGratMat); lines.renderOrder=2; globeGroup.add(lines);
 })();
 
 /* contours by marching squares */
@@ -404,16 +444,17 @@ const colT = new Float32Array(N*3), alpT = new Float32Array(N), sizT = new Float
 let stainStart=-1, stainSnap=true;
 for(let i=0;i<N;i++){ pos[i*3]=WX[i]; pos[i*3+1]=0; pos[i*3+2]=WZ[i]; }
 geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+geo.setAttribute('aGlobe', new THREE.BufferAttribute(GP,3));
 geo.setAttribute('aColor', new THREE.BufferAttribute(col,3));
 geo.setAttribute('aAlpha', new THREE.BufferAttribute(alp,1));
 geo.setAttribute('aSize', new THREE.BufferAttribute(siz,1));
 const mat = new THREE.ShaderMaterial({
   transparent:true, depthWrite:false,
-  uniforms:{ uScale:{value: innerHeight*.5}, uFogColor:{value:new THREE.Color(PAPER)}, uFogNear:{value:160}, uFogFar:{value:330}, uNearBlur:{value:0} },
-  vertexShader:`attribute vec3 aColor; attribute float aAlpha, aSize;
-    varying vec3 vC; varying float vA, vDepth, vNB; uniform float uScale, uNearBlur;
+  uniforms:{ uScale:{value: innerHeight*.5}, uFogColor:{value:new THREE.Color(PAPER)}, uFogNear:{value:160}, uFogFar:{value:330}, uNearBlur:{value:0}, uGlobe:{value:0} },
+  vertexShader:`attribute vec3 aColor, aGlobe; attribute float aAlpha, aSize;
+    varying vec3 vC; varying float vA, vDepth, vNB; uniform float uScale, uNearBlur, uGlobe;
     void main(){ vC=aColor; vA=aAlpha;
-      vec4 mv = modelViewMatrix * vec4(position,1.0);
+      vec4 mv = modelViewMatrix * vec4(mix(position, aGlobe, uGlobe),1.0);
       vDepth = -mv.z;
       vNB = uNearBlur * (1.0 - smoothstep(9.0, 34.0, vDepth));
       gl_PointSize = clamp(aSize * uScale / vDepth, 1.3, 10.0) * (1.0 + 1.5*vNB);
@@ -429,7 +470,7 @@ const mat = new THREE.ShaderMaterial({
       vec3 c = mix(cRim, vC, smoothstep(.5,.15,r));
       gl_FragColor = vec4(mix(c, uFogColor, fog), edge * vA * (1.0 - .5*vNB)); }`
 });
-const points = new THREE.Points(geo, mat); scene.add(points);
+const points = new THREE.Points(geo, mat); points.renderOrder=3; scene.add(points);
 
 /* ---------- grouping logic (mirrors the published atlas) ---------- */
 const lineage = DATA.mondoLineage, nodes = DATA.mondoNodes;
@@ -553,7 +594,8 @@ function buildLabels(){
     const fs = 13 + Math.min(14, Math.sqrt(g.n)/6);
     d.style.fontSize=fs+'px';
     labelsDiv.appendChild(d);
-    labelEls.push({el:d, x:a.x, z:a.z, k:g.k});
+    const gp=[0,0,0]; toGlobe(a.x, a.z, gp, 0);
+    labelEls.push({el:d, x:a.x, z:a.z, gx:gp[0], gy:gp[1], gz:gp[2], k:g.k});
   }
   placeLabels.dirty=true;
 }
@@ -562,10 +604,16 @@ function placeLabels(){
   let lf = 1;   /* during the flyover, labels stay hidden until the final reveal */
   if (cinema.on) lf = reduceMotion ? (cinema.slideI>=SLIDE_T.length-1 ? 1 : 0)
                                    : Math.min(1, Math.max(0, (cinema.t-78)/6));
+  if (globeMix>.05 && globeMix<.95) lf=0;   /* and they sit out the flat<->globe roll */
+  const onGlobe=globeMix>.5;
+  const cgx=camera.position.x-GC.x, cgy=camera.position.y, cgz=camera.position.z-GC.z;
   for (const L of labelEls){
-    v3.set(L.x, state.relief? 10:0, L.z).project(camera);
+    if (onGlobe) v3.set(L.gx, L.gy, L.gz);
+    else v3.set(L.x, state.relief? 10:0, L.z);
+    const facing = !onGlobe || ((L.gx-GC.x)*cgx + L.gy*cgy + (L.gz-GC.z)*cgz > 0);
+    v3.project(camera);
     const sx=(v3.x*.5+.5)*innerWidth, sy=(-v3.y*.5+.5)*innerHeight;
-    const vis = v3.z<1 && sx>-60 && sx<innerWidth+60 && sy>0 && sy<innerHeight;
+    const vis = facing && v3.z<1 && sx>-60 && sx<innerWidth+60 && sy>0 && sy<innerHeight;
     L.el.style.opacity = vis ? (state.isolate!=null && state.isolate!==L.k ? .18 : .95)*lf : 0;
     L.el.style.left=sx+'px'; L.el.style.top=sy+'px';
   }
@@ -600,11 +648,13 @@ let lastInteract = performance.now(), dragging=false, panning=false, px=0, py=0;
 const fling={vA:0, vP:0};           /* orbit release inertia */
 let lastMoveT=0;
 const canvas = renderer.domElement;
-canvas.addEventListener('pointerdown', e=>{ dragging=true; panning=(e.button===2 || e.shiftKey); px=e.clientX; py=e.clientY; fling.vA=0; fling.vP=0; lastMoveT=performance.now(); lastInteract=performance.now(); tourPause(); });
+let dragDist=0;
+canvas.addEventListener('pointerdown', e=>{ dragging=true; dragDist=0; panning=(e.button===2 || e.shiftKey) && !globeOn; px=e.clientX; py=e.clientY; fling.vA=0; fling.vP=0; lastMoveT=performance.now(); lastInteract=performance.now(); tourPause(); });
 addEventListener('pointerup', ()=>dragging=false);
 addEventListener('pointermove', e=>{
   if(dragging){
     const dx=e.clientX-px, dy=e.clientY-py; px=e.clientX; py=e.clientY; lastInteract=performance.now();
+    dragDist+=Math.abs(dx)+Math.abs(dy);
     if(panning){
       const k=ctl.dist/innerHeight*1.35;
       const sa=Math.sin(ctl.azim), ca=Math.cos(ctl.azim);
@@ -615,16 +665,21 @@ addEventListener('pointermove', e=>{
       const nowM=performance.now(), dtm=Math.max(8, nowM-lastMoveT); lastMoveT=nowM;
       const dA=-dx*.0045, dP=-dy*.0038;
       ctl.tAzim += dA;
-      ctl.tPolar = Math.min(1.36, Math.max(.14, ctl.tPolar + dP));
+      ctl.tPolar = Math.min(polarMax, Math.max(.14, ctl.tPolar + dP));
       fling.vA=Math.max(-3,Math.min(3, dA/dtm*1000));
       fling.vP=Math.max(-2,Math.min(2, dP/dtm*1000));
     }
   } else hover(e);
 });
 canvas.addEventListener('wheel', e=>{ e.preventDefault(); lastInteract=performance.now(); tourPause();
-  ctl.tDist = Math.min(300, Math.max(7, ctl.tDist*Math.pow(1.0011, e.deltaY))); }, {passive:false});
+  ctl.tDist = Math.min(300, Math.max(distMin, ctl.tDist*Math.pow(1.0011, e.deltaY))); }, {passive:false});
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
 function clampTarget(){
+  if (globeOn){
+    ctl.tTarget.x=Math.min(GC.x+12,Math.max(GC.x-12,ctl.tTarget.x));
+    ctl.tTarget.z=Math.min(GC.z+12,Math.max(GC.z-12,ctl.tTarget.z));
+    return;
+  }
   ctl.tTarget.x=Math.min(EXT.x1,Math.max(EXT.x0,ctl.tTarget.x));
   ctl.tTarget.z=Math.min(EXT.z1,Math.max(EXT.z0,ctl.tTarget.z));
 }
@@ -639,7 +694,7 @@ canvas.addEventListener('touchmove', e=>{
     const t=e.touches[0], p=touches[t.identifier]; if(!p) return;
     const nowM=performance.now(), dtm=Math.max(8, nowM-lastMoveT); lastMoveT=nowM;
     const dA=-(t.clientX-p[0])*.005, dP=-(t.clientY-p[1])*.004;
-    ctl.tAzim += dA; ctl.tPolar=Math.min(1.36,Math.max(.14,ctl.tPolar+dP));
+    ctl.tAzim += dA; ctl.tPolar=Math.min(polarMax,Math.max(.14,ctl.tPolar+dP));
     fling.vA=Math.max(-3,Math.min(3, dA/dtm*1000));
     fling.vP=Math.max(-2,Math.min(2, dP/dtm*1000));
     touches[t.identifier]=[t.clientX,t.clientY];
@@ -647,7 +702,7 @@ canvas.addEventListener('touchmove', e=>{
     const a=e.touches[0], b=e.touches[1];
     const pa=touches[a.identifier], pb=touches[b.identifier]; if(!pa||!pb) return;
     const d0=Math.hypot(pa[0]-pb[0],pa[1]-pb[1]), d1=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
-    ctl.tDist=Math.min(300,Math.max(7, ctl.tDist*d0/Math.max(1,d1)));
+    ctl.tDist=Math.min(300,Math.max(distMin, ctl.tDist*d0/Math.max(1,d1)));
     const mx=((a.clientX+b.clientX)-(pa[0]+pb[0]))/2, my=((a.clientY+b.clientY)-(pa[1]+pb[1]))/2;
     const k=ctl.dist/innerHeight*1.35, sa=Math.sin(ctl.azim), ca=Math.cos(ctl.azim);
     ctl.tTarget.x += (-mx*ca + my*sa)*k; ctl.tTarget.z += (mx*sa + my*ca)*k; clampTarget();
@@ -664,10 +719,13 @@ function hover(e){
   const now=performance.now(); if(now-lastHover<30) return; lastHover=now;
   mProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   const me=mProj.elements, hw=innerWidth/2, hh=innerHeight/2;
+  const onGlobe=globeMix>.5, src=onGlobe?GP:pos;
+  const cgx=camera.position.x-GC.x, cgy=camera.position.y, cgz=camera.position.z-GC.z;
   let best=-1, bestD=16*16, bestDepth=1e9;
   for(let i=0;i<N;i++){
     if(alp[i]<.2) continue;
-    const x=pos[i*3], y=pos[i*3+1], z=pos[i*3+2];
+    const x=src[i*3], y=src[i*3+1], z=src[i*3+2];
+    if(onGlobe && (x-GC.x)*cgx + y*cgy + (z-GC.z)*cgz <= 0) continue;
     const w = me[3]*x + me[7]*y + me[11]*z + me[15];
     if(w<=0) continue;
     const sx=(me[0]*x+me[4]*y+me[8]*z+me[12])/w, sy=(me[1]*x+me[5]*y+me[9]*z+me[13])/w;
@@ -695,6 +753,7 @@ function hover(e){
   }
 }
 canvas.addEventListener('click', e=>{
+  if (dragDist>6) return;   /* a drag is not a click */
   if (hoverIdx>=0 && P[hoverIdx][F.pmid]) window.open('https://pubmed.ncbi.nlm.nih.gov/'+P[hoverIdx][F.pmid]+'/','_blank','noopener');
 });
 canvas.style.cursor='grab';
@@ -738,7 +797,7 @@ function tourGo(i){
   const t=TOUR[i];
   if (state.mode!==t.mode){
     state.mode=t.mode;
-    document.querySelectorAll('.modes button').forEach(x=>x.classList.toggle('on', x.dataset.mode===t.mode));
+    document.querySelectorAll('#stainrow button').forEach(x=>x.classList.toggle('on', x.dataset.mode===t.mode));
     el('depthrow').style.display = t.mode==='mondo'?'flex':'none';
     computeGroups(); buildLabels();
   }
@@ -754,7 +813,7 @@ function tourGo(i){
   clearTimeout(tourTimer);
   if(!tourPaused) tourTimer=setTimeout(()=>{ if(tourI<TOUR.length-1) tourGo(tourI+1); }, 9000);
 }
-function tourStart(){ tourPaused=false; tourbar.classList.add('open'); tourGo(0); }
+function tourStart(){ if(globeOn) setGlobe(false,true); tourPaused=false; tourbar.classList.add('open'); tourGo(0); }
 function tourExit(){ tourbar.classList.remove('open'); tourI=-1; clearTimeout(tourTimer); state.isolate=null; repaint(); goHome(false); }
 function tourPause(){ if(tourI>=0){ tourPaused=true; clearTimeout(tourTimer); } }
 el('playTour').onclick=tourStart;
@@ -861,12 +920,13 @@ function sizeBars(){
 function cinemaStart(){
   if(cinema.on) return;
   if(tourI>=0) tourExit();
-  cineSaved={ mode:state.mode, level:state.level, iso:state.isolate,
+  cineSaved={ mode:state.mode, level:state.level, iso:state.isolate, globe:globeOn,
     tx:ctl.target.x, ty:ctl.target.y, tz:ctl.target.z, dist:ctl.dist, azim:ctl.azim, polar:ctl.polar,
     ttx:ctl.tTarget.x, tty:ctl.tTarget.y, ttz:ctl.tTarget.z, tDist:ctl.tDist, tAzim:ctl.tAzim, tPolar:ctl.tPolar };
+  if (globeOn) setGlobe(false, true);
   if(state.mode!=='site'){
     state.mode='site';
-    document.querySelectorAll('.modes button').forEach(x=>x.classList.toggle('on', x.dataset.mode==='site'));
+    document.querySelectorAll('#stainrow button').forEach(x=>x.classList.toggle('on', x.dataset.mode==='site'));
     el('depthrow').style.display='none'; computeGroups();
   }
   state.isolate=null; repaint(); buildLabels();
@@ -888,7 +948,7 @@ function cinemaEnd(natural){
   if(s){
     if(state.mode!==s.mode){
       state.mode=s.mode; state.level=s.level;
-      document.querySelectorAll('.modes button').forEach(x=>x.classList.toggle('on', x.dataset.mode===s.mode));
+      document.querySelectorAll('#stainrow button').forEach(x=>x.classList.toggle('on', x.dataset.mode===s.mode));
       el('depthrow').style.display=s.mode==='mondo'?'flex':'none'; computeGroups();
     }
     state.isolate=s.iso;
@@ -896,6 +956,7 @@ function cinemaEnd(natural){
     repaint(); buildLabels();
     if(natural) goHome(true);   /* flight ends exactly at the home framing */
     else {
+      if (s.globe) setGlobe(true, true);
       ctl.target.set(s.tx,s.ty,s.tz); ctl.dist=s.dist; ctl.azim=s.azim; ctl.polar=s.polar;
       ctl.tTarget.set(s.ttx,s.tty,s.ttz); ctl.tDist=s.tDist; ctl.tAzim=s.tAzim; ctl.tPolar=s.tPolar;
     }
@@ -935,10 +996,44 @@ addEventListener('keydown', e=>{
 });
 window.__cinema={ start:cinemaStart, exit:()=>cinemaEnd(false), seek:t=>{ if(cinema.on) cineSeek(t); } };
 
+/* ---------- globe projection toggle ---------- */
+function syncGlobeVis(){
+  /* the sphere solidifies only once the points have landed, so the morph never swallows them */
+  sphereMat.opacity=.98*Math.pow(globeMix,3);
+  sphereMat.depthWrite = globeMix>.97;
+  globeGratMat.opacity=.5*globeMix;
+  globeGroup.visible=globeMix>.002;
+  neatMat.opacity=.9*(1-globeMix);
+  if (born>=1) contourGroup.children.forEach(c=>c.material.opacity=.55*(1-globeMix));
+  contourGroup.visible=globeMix<.998;
+}
+function setGlobe(on, snap){
+  if (globeOn===on && !snap) return;
+  globeOn=on; globeTarget=on?1:0;
+  document.querySelectorAll('#viewrow button').forEach(b=>b.classList.toggle('on',(b.dataset.view==='globe')===on));
+  const rel=el('relief');
+  rel.disabled=on; rel.parentElement.style.opacity=on?.45:'';
+  if (on && state.relief){ rel.checked=false; state.relief=false; el('reliefnote').style.display='none'; repaint(); }
+  polarMax = on? 2.75 : 1.36; distMin = on? 56 : 7;
+  fling.vA=0; fling.vP=0;
+  if (on){
+    ctl.tTarget.set(GC.x, 0, GC.z);
+    ctl.tDist=150; ctl.tPolar=1.32;      /* face the continent, whole sphere in frame */
+  } else {
+    goHome(false);
+  }
+  if (snap){
+    globeMix=globeTarget; mat.uniforms.uGlobe.value=globeMix; syncGlobeVis();
+    ctl.target.copy(ctl.tTarget); ctl.dist=ctl.tDist; ctl.azim=ctl.tAzim; ctl.polar=ctl.tPolar;
+  }
+  placeLabels.dirty=true; lastInteract=performance.now();
+}
+document.querySelectorAll('#viewrow button').forEach(b=>{ b.onclick=()=>setGlobe(b.dataset.view==='globe'); });
+
 /* ---------- UI wiring ---------- */
-document.querySelectorAll('.modes button').forEach(b=>{
+document.querySelectorAll('#stainrow button').forEach(b=>{
   b.onclick=()=>{
-    document.querySelectorAll('.modes button').forEach(x=>x.classList.remove('on'));
+    document.querySelectorAll('#stainrow button').forEach(x=>x.classList.remove('on'));
     b.classList.add('on');
     state.mode=b.dataset.mode; state.isolate=null;
     el('depthrow').style.display = state.mode==='mondo'?'flex':'none';
@@ -993,7 +1088,7 @@ function frame(){
     born=Math.min(1, tms/2300);
     const eP=x=>{ x=Math.min(1,Math.max(0,x)); return x<.5? 2*x*x : 1-Math.pow(-2*x+2,2)/2; };
     mat.uniforms.uScale.value=innerHeight*.5*(0.25+0.75*eP((tms-280)/1400));
-    contourGroup.children.forEach((c,i)=>{ c.material.opacity=.55*eP((tms-(200+i*170))/520); });
+    contourGroup.children.forEach((c,i)=>{ c.material.opacity=.55*(1-globeMix)*eP((tms-(200+i*170))/520); });
     if (tms<1700){
       const ec=1-Math.pow(1-Math.min(1,Math.max(0,(tms-450)/1050)),3);
       el('count').textContent=Math.round(N*ec).toLocaleString()+' papers';
@@ -1016,16 +1111,23 @@ function frame(){
     tipX+=(tipTX-tipX)*Math.min(1, dt*16); tipY+=(tipTY-tipY)*Math.min(1, dt*16);
     tip.style.left=tipX+'px'; tip.style.top=tipY+'px';
   }
+  if (globeMix!==globeTarget){       /* flat <-> globe morph */
+    if (reduceMotion) globeMix=globeTarget;
+    else { globeMix+=(globeTarget-globeMix)*(1-Math.exp(-dt*2.6));
+      if (Math.abs(globeTarget-globeMix)<.001) globeMix=globeTarget; }
+    mat.uniforms.uGlobe.value=globeMix;
+    syncGlobeVis();
+  }
   const nb=mat.uniforms.uNearBlur.value;
   mat.uniforms.uNearBlur.value = nb + (uNBtarget-nb)*Math.min(1, dt*5);
   if (cinema.on) cinemaFrame(dt);
   else {
     if (!reduceMotion && !dragging && (Math.abs(fling.vA)>.001 || Math.abs(fling.vP)>.001)){
       ctl.tAzim += fling.vA*dt;
-      ctl.tPolar = Math.min(1.36, Math.max(.14, ctl.tPolar + fling.vP*dt));
+      ctl.tPolar = Math.min(polarMax, Math.max(.14, ctl.tPolar + fling.vP*dt));
       const dk=Math.exp(-dt*3.3); fling.vA*=dk; fling.vP*=dk;
     }
-    if (!reduceMotion && tourI<0 && nowT-lastInteract>25000) ctl.tAzim += .0007;
+    if (!reduceMotion && tourI<0 && nowT-lastInteract>(globeOn?8000:25000)) ctl.tAzim += globeOn? .0011 : .0007;
     applyCam();
   }
   placeLabels();
