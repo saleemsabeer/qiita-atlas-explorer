@@ -149,6 +149,15 @@ body.collapsed #cartouche::after{content:"Qiita Atlas"; font-family:var(--serif)
 #hint{position:fixed; bottom:22px; right:18px; z-index:10; font-size:11.5px; color:var(--ink-soft);
   background:var(--card); border:1px solid var(--rule); padding:5px 10px}
 
+/* featured-territory card */
+#terrcard{position:fixed; left:50%; transform:translateX(-50%); bottom:64px; z-index:30; text-align:center;
+  background:var(--card); border:1px solid var(--ink); box-shadow:2px 2px 0 rgba(63,58,42,.15);
+  padding:9px 18px 8px; opacity:0; pointer-events:none; transition:opacity .3s}
+#terrcard.show{opacity:1}
+#terrcard .tn{font-family:var(--serif); font-variant-caps:all-small-caps; letter-spacing:.12em; font-size:16px}
+#terrcard .tf{font-size:12px; color:var(--ink-soft); margin-top:2px; font-variant-numeric:tabular-nums}
+body.cinema #terrcard{display:none}
+
 /* quiet details */
 :focus-visible{outline:2px solid var(--ink); outline-offset:2px}
 ::selection{background:var(--gut); color:var(--card)}
@@ -275,6 +284,7 @@ body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
 </aside>
 
 <div id="count"></div>
+<div id="terrcard"><div class="tn"></div><div class="tf"></div></div>
 <div id="tip"><div class="spec"><i class="dot"></i><span class="j"></span><span class="y"></span></div><div class="t"></div><div class="m"></div></div>
 
 <div id="tourbar">
@@ -642,7 +652,11 @@ function renderLegend(){
     li.innerHTML = '<span class="sw" style="background:'+(state.colorOf.get(g.k)||MUTED)+'"></span>'+
       '<span class="nm"></span><span class="ct">'+g.n.toLocaleString()+'</span>';
     li.querySelector('.nm').textContent = g.name;
-    li.onclick = ()=>{ state.isolate = (state.isolate===g.k)? null : g.k; repaint(); };
+    li.onclick = ()=>{
+      const was = state.isolate===g.k;
+      state.isolate = was? null : g.k; repaint();
+      if (!was) flyToTerritory(g); else hideTerrCard();
+    };
     li.onpointerenter = ()=>{ for(const L of labelEls) if(L.k===g.k) L.el.classList.add('bleed'); };
     li.onpointerleave = ()=>{ for(const L of labelEls) if(L.k===g.k) L.el.classList.remove('bleed'); };
     ul.appendChild(li);
@@ -802,7 +816,7 @@ const fling={vA:0, vP:0};           /* orbit release inertia */
 let lastMoveT=0;
 const canvas = renderer.domElement;
 let dragDist=0;
-canvas.addEventListener('pointerdown', e=>{ dragging=true; dragDist=0; panning=(e.button===2 || e.shiftKey) && !globeOn; px=e.clientX; py=e.clientY; fling.vA=0; fling.vP=0; lastMoveT=performance.now(); lastInteract=performance.now(); tourPause(); });
+canvas.addEventListener('pointerdown', e=>{ dragging=true; dragDist=0; panning=(e.button===2 || e.shiftKey) && !globeOn; px=e.clientX; py=e.clientY; fling.vA=0; fling.vP=0; lastMoveT=performance.now(); lastInteract=performance.now(); tourPause(); hideTerrCard(); });
 addEventListener('pointerup', ()=>dragging=false);
 addEventListener('pointermove', e=>{
   if(dragging){
@@ -966,14 +980,14 @@ function tourGo(i){
   clearTimeout(tourTimer);
   if(!tourPaused) tourTimer=setTimeout(()=>{ if(tourI<TOUR.length-1) tourGo(tourI+1); }, 9000);
 }
-function tourStart(){ if(globeOn) setGlobe(false,true); tourPaused=false; tourbar.classList.add('open'); tourGo(0); }
+function tourStart(){ if(globeOn) setGlobe(false,true); hideTerrCard(); tourPaused=false; tourbar.classList.add('open'); tourGo(0); }
 function tourExit(){ tourbar.classList.remove('open'); tourI=-1; clearTimeout(tourTimer); state.isolate=null; repaint(); goHome(false); }
 function tourPause(){ if(tourI>=0){ tourPaused=true; clearTimeout(tourTimer); } }
 el('playTour').onclick=tourStart;
 el('tExit').onclick=tourExit;
 el('tNext').onclick=()=>{ tourPaused=false; tourGo(Math.min(TOUR.length-1,tourI+1)); };
 el('tPrev').onclick=()=>{ tourPaused=false; tourGo(Math.max(0,tourI-1)); };
-el('resetView').onclick=()=>{ state.isolate=null; repaint(); goHome(false); };
+el('resetView').onclick=()=>{ state.isolate=null; repaint(); goHome(false); hideTerrCard(); };
 
 /* ---------- cinematic fly-through ----------
    One unbroken 90 s take: position + look-at keyframes on centripetal Catmull-Rom
@@ -1073,6 +1087,7 @@ function sizeBars(){
 function cinemaStart(){
   if(cinema.on) return;
   if(tourI>=0) tourExit();
+  hideTerrCard();
   cineSaved={ mode:state.mode, level:state.level, iso:state.isolate, globe:globeOn,
     tx:ctl.target.x, ty:ctl.target.y, tz:ctl.target.z, dist:ctl.dist, azim:ctl.azim, polar:ctl.polar,
     ttx:ctl.tTarget.x, tty:ctl.tTarget.y, ttz:ctl.tTarget.z, tDist:ctl.tDist, tAzim:ctl.tAzim, tPolar:ctl.tPolar };
@@ -1181,9 +1196,39 @@ function setGlobe(on, snap){
     globeMix=globeTarget; mat.uniforms.uGlobe.value=globeMix; syncGlobeVis();
     ctl.target.copy(ctl.tTarget); ctl.dist=ctl.tDist; ctl.azim=ctl.tAzim; ctl.polar=ctl.tPolar;
   }
-  placeLabels.dirty=true; lastInteract=performance.now();
+  placeLabels.dirty=true; lastInteract=performance.now(); hideTerrCard();
 }
 document.querySelectorAll('#viewrow button').forEach(b=>{ b.onclick=()=>setGlobe(b.dataset.view==='globe'); });
+
+/* ---------- featured territories: legend click flies there (Half-Earth pattern) ---------- */
+function hideTerrCard(){ el('terrcard').classList.remove('show'); }
+function terrFact(k, n){
+  const yrs=new Map();
+  for(let i=0;i<N;i++){ if(state.keys[i]!==k) continue;
+    const y=P[i][F.year]; yrs.set(y,(yrs.get(y)||0)+1); }
+  let py=0, pc=0; yrs.forEach((c,y)=>{ if(c>pc || (c===pc && y>py)){ pc=c; py=y; } });
+  return Math.round(100*n/N)+'% of the survey · peak year '+py+' ('+pc+' papers)';
+}
+function flyToTerritory(g){
+  const a=anchorOf(g.k);
+  if (globeOn){
+    const gp=[0,0,0]; toGlobe(a.x, a.z, gp, 0);
+    ctl.tAzim = Math.atan2(gp[0]-GC.x, gp[2]-GC.z);
+    const lat=Math.asin(Math.max(-1, Math.min(1, gp[1]/GR)));
+    ctl.tPolar = Math.min(polarMax, Math.max(.25, Math.PI/2 - lat));
+    ctl.tDist = 112;
+  } else {
+    ctl.tTarget.set(a.x, 0, a.z); clampTarget();
+    ctl.tDist = Math.min(88, Math.max(42, Math.sqrt(g.n)*1.35));
+    ctl.tPolar = .72;
+  }
+  const card=el('terrcard');
+  card.querySelector('.tn').textContent=g.name;
+  card.querySelector('.tf').textContent=g.n.toLocaleString()+' papers · '+terrFact(g.k, g.n);
+  card.classList.add('show');
+  fling.vA=0; fling.vP=0;
+  lastInteract=performance.now();
+}
 
 /* ---------- UI wiring ---------- */
 document.querySelectorAll('#stainrow button').forEach(b=>{
