@@ -18,3 +18,5 @@ Nothing scientific was added, removed or changed. In disease, class and topic mo
 seven largest groups are colored and the rest are muted gray, matching the published
 atlas's legend behaviour; papers whose group is "unclustered" or "none/healthy-cohort"
 are shown muted, not hidden.
+
+- `og-image.png` — a screenshot of the rendered page, committed so link previews (Open Graph) show the map. Presentation only, generated from the page itself.

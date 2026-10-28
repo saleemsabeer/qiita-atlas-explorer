@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Qiita Atlas</title>
 <meta name="description" content="A survey of 7,236 human-microbiome papers, arranged by text similarity and labeled by body site and MONDO disease.">
+<meta name="theme-color" content="#F1EFE8">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Qiita Atlas">
+<meta property="og:description" content="A survey of 7,236 human-microbiome papers, 2010–2026, arranged by text similarity — stain the map by body site, MONDO disease, or topic, and watch the 90-second flyover.">
+<meta property="og:url" content="https://qiita-atlas-explorer-three.vercel.app/">
+<meta property="og:image" content="https://qiita-atlas-explorer-three.vercel.app/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Qiita Atlas">
+<meta name="twitter:description" content="7,236 microbiome papers as a navigable map — body site, MONDO disease, and topic.">
+<meta name="twitter:image" content="https://qiita-atlas-explorer-three.vercel.app/og-image.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23F1EFE8'/%3E%3Ccircle cx='13' cy='17' r='6' fill='%234A5FB0'/%3E%3Ccircle cx='23' cy='10' r='3' fill='%23D4708E'/%3E%3Ccircle cx='24' cy='22' r='2' fill='%237B3F8C'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -29,7 +41,9 @@ body{background:var(--paper); color:var(--ink); font-family:var(--sans); font-si
 .terr{position:absolute; transform:translate(-50%,-50%); white-space:nowrap; pointer-events:none;
   font-family:var(--serif); font-style:italic; letter-spacing:.04em; color:var(--ink);
   text-shadow:0 0 6px var(--paper), 0 0 2px var(--paper), 1px 1px 0 var(--paper), -1px -1px 0 var(--paper);
-  transition:opacity .4s}
+  transition:opacity .4s, transform .25s, text-shadow .25s}
+.terr.bleed{transform:translate(-50%,-50%) scale(1.05);
+  text-shadow:0 0 7px var(--paper), 0 0 2px var(--paper), 1px 1px 0 var(--paper), -1px -1px 0 var(--paper), 0 0 12px rgba(43,42,36,.4)}
 .terr small{font-family:var(--sans); font-style:normal; font-size:10px; color:var(--ink-soft); margin-left:6px; letter-spacing:.02em}
 
 /* cartouche */
@@ -52,8 +66,10 @@ h1 em{font-weight:400}
 .sliderrow output{font-size:12px; width:16px; text-align:right}
 input[type=range]{flex:1; accent-color:var(--ink); height:18px}
 #legend{list-style:none; margin-top:2px}
-#legend li{display:flex; align-items:center; gap:9px; padding:4.5px 4px; cursor:pointer; border:1px solid transparent}
-#legend li:hover{background:var(--paper)}
+#legend li{display:flex; align-items:center; gap:9px; padding:4.5px 4px; cursor:pointer; border:1px solid transparent;
+  background:linear-gradient(90deg, var(--paper) 0 50%, rgba(241,239,232,0) 50%) right/250% 100% no-repeat;
+  transition:background-position .28s ease, border-color .12s ease}
+#legend li:hover{background-position:left}
 #legend li.iso{border-color:var(--ink); background:var(--paper)}
 #legend li.dim{opacity:.4}
 #legend .sw{width:11px; height:11px; border-radius:50%; border:1px solid rgba(43,42,36,.35); flex:0 0 auto}
@@ -69,8 +85,12 @@ input[type=range]{flex:1; accent-color:var(--ink); height:18px}
 .yearwrap input::-moz-range-thumb{pointer-events:auto; width:11px; height:11px; border-radius:50%; background:var(--card); border:1.5px solid var(--ink); cursor:ew-resize}
 .rowbtns{display:flex; flex-wrap:wrap; gap:6px; margin-top:12px}
 .rowbtns button, #tourbar button, .ghost{font:500 12.5px var(--sans); border:1px solid var(--ink); background:var(--card);
-  color:var(--ink); padding:7px 12px 6px; cursor:pointer}
+  color:var(--ink); padding:7px 12px 6px; cursor:pointer; box-shadow:0 1px 0 rgba(63,58,42,.28);
+  transition:background .12s ease, box-shadow .12s ease, transform .12s ease}
 .rowbtns button:hover, #tourbar button:hover, .ghost:hover{background:var(--paper)}
+.rowbtns button:active, #tourbar button:active, .ghost:active{transform:translateY(1px); box-shadow:0 0 0 rgba(63,58,42,0)}
+.modes button{transition:background .12s ease, border-color .12s ease, box-shadow .12s ease, transform .12s ease}
+.modes button:active, #collapse:active{transform:translateY(1px)}
 .rowbtns .primary{background:var(--ink); color:var(--card)}
 .rowbtns .primary:hover{background:#3b392f}
 .check{display:flex; align-items:center; gap:7px; margin-top:9px; font-size:12.5px; color:var(--ink-soft); cursor:pointer}
@@ -88,8 +108,13 @@ body.collapsed #cartouche::after{content:"Qiita Atlas"; font-family:var(--serif)
   padding:6px 11px; font-size:12px; color:var(--ink-soft); font-variant-numeric:tabular-nums}
 
 /* tooltip */
-#tip{position:fixed; z-index:40; max-width:320px; background:var(--card); border:1px solid var(--ink);
-  box-shadow:2px 2px 0 rgba(63,58,42,.15); padding:10px 12px; pointer-events:none; display:none}
+#tip{position:fixed; z-index:40; width:300px; background:var(--card); border:1px solid var(--ink);
+  box-shadow:2px 2px 0 rgba(63,58,42,.15); padding:10px 12px 9px; pointer-events:none; display:none}
+#tip .spec{display:flex; align-items:center; gap:7px; margin-bottom:6px; padding-bottom:6px; border-bottom:1px solid var(--rule-soft)}
+#tip .dot{width:9px; height:9px; border-radius:50%; border:1px solid rgba(43,42,36,.3); flex:0 0 auto}
+#tip .j{flex:1; min-width:0; font-variant-caps:all-small-caps; letter-spacing:.07em; font-size:13px; color:var(--ink);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#tip .y{margin-left:auto; font-variant-numeric:tabular-nums; font-size:12px; color:var(--ink-soft); flex:0 0 auto}
 #tip .t{font-family:var(--serif); font-size:13.5px; line-height:1.35; margin-bottom:5px}
 #tip .m{font-size:11.5px; color:var(--ink-soft); line-height:1.5}
 #tip .m b{color:var(--ink); font-weight:600}
@@ -116,6 +141,27 @@ body.collapsed #cartouche::after{content:"Qiita Atlas"; font-family:var(--serif)
 #about p b{color:var(--ink)}
 #hint{position:fixed; bottom:22px; right:18px; z-index:10; font-size:11.5px; color:var(--ink-soft);
   background:var(--card); border:1px solid var(--rule); padding:5px 10px}
+
+/* quiet details */
+:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+::selection{background:var(--gut); color:var(--card)}
+#cartouche .inner{scrollbar-color:var(--rule) transparent}
+#cartouche .inner::-webkit-scrollbar{width:8px}
+#cartouche .inner::-webkit-scrollbar-thumb{background:var(--rule); border:2px solid var(--card); border-radius:4px}
+#cartouche .inner::-webkit-scrollbar-track{background:transparent}
+
+/* boot: instant-paint pre-loader */
+#boot{position:fixed; inset:0; z-index:90; background:var(--paper); display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:16px; transition:opacity .55s ease}
+#boot.bye{opacity:0; pointer-events:none}
+#boot .bt{font-family:var(--serif); font-weight:600; font-size:34px; letter-spacing:.01em; color:var(--ink)}
+#boot .bt em{font-weight:400}
+#boot .br{width:180px; height:1px; background:var(--rule); position:relative; overflow:hidden}
+#boot .br::after{content:""; position:absolute; inset:0; background:var(--ink); transform:scaleX(0); transform-origin:left}
+@media (prefers-reduced-motion: no-preference){ #boot .br::after{animation:bootfill 1.15s cubic-bezier(.4,0,.2,1) forwards} }
+@keyframes bootfill{to{transform:scaleX(1)}}
+#boot .bs{font-family:var(--sans); font-size:11.5px; color:var(--ink-soft); letter-spacing:.04em}
+body.booting #cartouche, body.booting #count, body.booting #hint{opacity:0; transform:translateY(6px)}
 /* cinema: fly-through */
 #cinebars .bar{position:fixed; left:0; right:0; height:0; background:#15140F; z-index:44;
   transition:height .9s cubic-bezier(.65,0,.35,1)}
@@ -141,7 +187,7 @@ body.collapsed #cartouche::after{content:"Qiita Atlas"; font-family:var(--serif)
 #cinecard .bt{font-family:var(--serif); font-weight:600; font-size:52px; letter-spacing:.01em}
 #cinecard .bt em{font-weight:400}
 #cinecard .bs{font-family:var(--sans); font-size:14px; color:var(--ink-soft); margin-top:8px}
-#cartouche,#count,#hint{transition:opacity .6s}
+#cartouche,#count,#hint{transition:opacity .6s, transform .7s cubic-bezier(.22,.7,.25,1)}
 body.cinema #cartouche, body.cinema #count, body.cinema #hint{opacity:0; pointer-events:none}
 body.cinema #cineclick{display:block}
 body.cinema #cinevig{opacity:1}
@@ -160,7 +206,12 @@ body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
 }
 </style>
 </head>
-<body>
+<body class="booting">
+<div id="boot">
+  <div class="bt">Qiita <em>Atlas</em></div>
+  <div class="br"></div>
+  <div class="bs">7,236 papers on the human microbiome</div>
+</div>
 <div id="stage"></div>
 <div id="labels"></div>
 <div id="grain"></div>
@@ -211,7 +262,7 @@ body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
 </aside>
 
 <div id="count"></div>
-<div id="tip"><div class="t"></div><div class="m"></div></div>
+<div id="tip"><div class="spec"><i class="dot"></i><span class="j"></span><span class="y"></span></div><div class="t"></div><div class="m"></div></div>
 
 <div id="tourbar">
   <div class="tt"></div>
@@ -322,9 +373,9 @@ const camera = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, .5, 900);
 const contourGroup = new THREE.Group(); scene.add(contourGroup);
 (function(){
   const levels=[.09,.2,.38,.6].map(f=>f*dmax);
-  const verts=[];
   const X=i=>EXT.x0+gw*i/(G-1), Z=i=>EXT.z0+gh*i/(G-1);
-  for(const L of levels){
+  for(const L of levels){          /* one object per level so the entrance can stagger them */
+    const verts=[];
     for(let z=0;z<G-1;z++)for(let x=0;x<G-1;x++){
       const a=dens[z*G+x],b=dens[z*G+x+1],c=dens[(z+1)*G+x+1],d=dens[(z+1)*G+x];
       let idx=(a>L?8:0)|(b>L?4:0)|(c>L?2:0)|(d>L?1:0);
@@ -339,15 +390,18 @@ const contourGroup = new THREE.Group(); scene.add(contourGroup);
                   13:[bot,right],14:[left,bot]}[idx];
       for(let s=0;s<segs.length;s+=2){ verts.push(segs[s][0],0,segs[s][1], segs[s+1][0],0,segs[s+1][1]); }
     }
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(verts,3));
+    contourGroup.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({color:0xBFBAA8, transparent:true, opacity: reduceMotion? .55 : 0})));
   }
-  const g=new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(verts,3));
-  contourGroup.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({color:0xBFBAA8, transparent:true, opacity:.55})));
 })();
 
 /* points */
 const geo = new THREE.BufferGeometry();
 const pos = new Float32Array(N*3), col = new Float32Array(N*3), alp = new Float32Array(N), siz = new Float32Array(N);
+/* repaint writes TARGETS; the frame loop eases the live buffers toward them (re-stain like dye) */
+const colT = new Float32Array(N*3), alpT = new Float32Array(N), sizT = new Float32Array(N), posYT = new Float32Array(N);
+let stainStart=-1, stainSnap=true;
 for(let i=0;i<N;i++){ pos[i*3]=WX[i]; pos[i*3+1]=0; pos[i*3+2]=WZ[i]; }
 geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
 geo.setAttribute('aColor', new THREE.BufferAttribute(col,3));
@@ -430,12 +484,17 @@ function repaint(){
     else if (k<0 || !state.colorOf.has(k)){ c=MUTED; a=.5; }
     if (inYears && (state.isolate==null || k===state.isolate)) vis++;
     tmpC.set(c);
-    col[i*3]=tmpC.r; col[i*3+1]=tmpC.g; col[i*3+2]=tmpC.b;
-    alp[i]=a; siz[i]=s;
-    pos[i*3+1] = state.relief ? DENS[i]*DENS[i]*14 : 0;
+    colT[i*3]=tmpC.r; colT[i*3+1]=tmpC.g; colT[i*3+2]=tmpC.b;
+    alpT[i]=a; sizT[i]=s;
+    posYT[i] = state.relief ? DENS[i]*DENS[i]*14 : 0;
   }
-  geo.attributes.aColor.needsUpdate=true; geo.attributes.aAlpha.needsUpdate=true;
-  geo.attributes.aSize.needsUpdate=true; geo.attributes.position.needsUpdate=true;
+  if (stainSnap || reduceMotion){
+    col.set(colT); alp.set(alpT); siz.set(sizT);
+    for(let i=0;i<N;i++) pos[i*3+1]=posYT[i];
+    geo.attributes.aColor.needsUpdate=true; geo.attributes.aAlpha.needsUpdate=true;
+    geo.attributes.aSize.needsUpdate=true; geo.attributes.position.needsUpdate=true;
+    stainSnap=false; stainStart=-1;
+  } else stainStart=performance.now();
   inView = vis;
   el('count').textContent = vis===N ? N.toLocaleString()+' papers' : vis.toLocaleString()+' of '+N.toLocaleString()+' papers';
   renderLegend(); placeLabels.dirty=true;
@@ -454,6 +513,8 @@ function renderLegend(){
       '<span class="nm"></span><span class="ct">'+g.n.toLocaleString()+'</span>';
     li.querySelector('.nm').textContent = g.name;
     li.onclick = ()=>{ state.isolate = (state.isolate===g.k)? null : g.k; repaint(); };
+    li.onpointerenter = ()=>{ for(const L of labelEls) if(L.k===g.k) L.el.classList.add('bleed'); };
+    li.onpointerleave = ()=>{ for(const L of labelEls) if(L.k===g.k) L.el.classList.remove('bleed'); };
     ul.appendChild(li);
   }
   if (rest>0){
@@ -536,8 +597,10 @@ function goHome(instant){
 }
 goHome(true);
 let lastInteract = performance.now(), dragging=false, panning=false, px=0, py=0;
+const fling={vA:0, vP:0};           /* orbit release inertia */
+let lastMoveT=0;
 const canvas = renderer.domElement;
-canvas.addEventListener('pointerdown', e=>{ dragging=true; panning=(e.button===2 || e.shiftKey); px=e.clientX; py=e.clientY; lastInteract=performance.now(); tourPause(); });
+canvas.addEventListener('pointerdown', e=>{ dragging=true; panning=(e.button===2 || e.shiftKey); px=e.clientX; py=e.clientY; fling.vA=0; fling.vP=0; lastMoveT=performance.now(); lastInteract=performance.now(); tourPause(); });
 addEventListener('pointerup', ()=>dragging=false);
 addEventListener('pointermove', e=>{
   if(dragging){
@@ -549,8 +612,12 @@ addEventListener('pointermove', e=>{
       ctl.tTarget.z += (dx*sa + dy*ca)*k;
       clampTarget();
     } else {
-      ctl.tAzim -= dx*.0045;
-      ctl.tPolar = Math.min(1.36, Math.max(.14, ctl.tPolar - dy*.0038));
+      const nowM=performance.now(), dtm=Math.max(8, nowM-lastMoveT); lastMoveT=nowM;
+      const dA=-dx*.0045, dP=-dy*.0038;
+      ctl.tAzim += dA;
+      ctl.tPolar = Math.min(1.36, Math.max(.14, ctl.tPolar + dP));
+      fling.vA=Math.max(-3,Math.min(3, dA/dtm*1000));
+      fling.vP=Math.max(-2,Math.min(2, dP/dtm*1000));
     }
   } else hover(e);
 });
@@ -570,7 +637,11 @@ canvas.addEventListener('touchmove', e=>{
   const ids=Object.keys(touches);
   if(e.touches.length===1 && ids.length>=1){
     const t=e.touches[0], p=touches[t.identifier]; if(!p) return;
-    ctl.tAzim -= (t.clientX-p[0])*.005; ctl.tPolar=Math.min(1.36,Math.max(.14,ctl.tPolar-(t.clientY-p[1])*.004));
+    const nowM=performance.now(), dtm=Math.max(8, nowM-lastMoveT); lastMoveT=nowM;
+    const dA=-(t.clientX-p[0])*.005, dP=-(t.clientY-p[1])*.004;
+    ctl.tAzim += dA; ctl.tPolar=Math.min(1.36,Math.max(.14,ctl.tPolar+dP));
+    fling.vA=Math.max(-3,Math.min(3, dA/dtm*1000));
+    fling.vP=Math.max(-2,Math.min(2, dP/dtm*1000));
     touches[t.identifier]=[t.clientX,t.clientY];
   } else if (e.touches.length===2){
     const a=e.touches[0], b=e.touches[1];
@@ -586,7 +657,7 @@ canvas.addEventListener('touchmove', e=>{
 
 /* ---------- hover + click ---------- */
 const tip=el('tip');
-let hoverIdx=-1, lastHover=0;
+let hoverIdx=-1, lastHover=0, tipX=0, tipY=0, tipTX=0, tipTY=0;
 const mProj = new THREE.Matrix4();
 function hover(e){
   if (cinema.on) return;
@@ -607,15 +678,21 @@ function hover(e){
   hoverIdx=best;
   if(best<0){ tip.style.display='none'; canvas.style.cursor='grab'; return; }
   canvas.style.cursor='pointer';
-  const p=P[best];
+  const p=P[best], siteName=DATA.sites[p[F.site]];
+  tip.querySelector('.dot').style.background = STAIN[siteName] || MUTED;
+  tip.querySelector('.j').textContent = DATA.journals[p[F.journal]];
+  tip.querySelector('.y').textContent = p[F.year];
   tip.querySelector('.t').textContent = p[F.title];
   const m = p[F.mondo], mondoName = (m!=null&&m>=0)? nodes[m].name : 'no disease studied';
-  tip.querySelector('.m').innerHTML = '<b>'+DATA.journals[p[F.journal]]+'</b>, '+p[F.year]+
-    '<br>'+DATA.sites[p[F.site]]+', <b></b>'+
+  tip.querySelector('.m').innerHTML = '<b></b>, <b></b>'+
     '<br><span style="font-size:10.5px">'+DATA.tiers[p[F.tier]]+' evidence, click for PubMed</span>';
-  tip.querySelector('.m b:last-of-type').textContent = mondoName;
-  const tx=Math.min(innerWidth-336, e.clientX+16), ty=Math.min(innerHeight-120, e.clientY+14);
-  tip.style.left=tx+'px'; tip.style.top=ty+'px'; tip.style.display='block';
+  const bs=tip.querySelectorAll('.m b'); bs[0].textContent=siteName; bs[1].textContent=mondoName;
+  tipTX=Math.max(8, Math.min(innerWidth-316, e.clientX+16));
+  tipTY=Math.max(8, Math.min(innerHeight-132, e.clientY+14));
+  if (tip.style.display!=='block'){   /* appear in place, then trail the cursor */
+    tipX=tipTX; tipY=tipTY;
+    tip.style.left=tipX+'px'; tip.style.top=tipY+'px'; tip.style.display='block';
+  }
 }
 canvas.addEventListener('click', e=>{
   if (hoverIdx>=0 && P[hoverIdx][F.pmid]) window.open('https://pubmed.ncbi.nlm.nih.gov/'+P[hoverIdx][F.pmid]+'/','_blank','noopener');
@@ -657,6 +734,7 @@ let tourI=-1, tourTimer=null, tourPaused=false;
 const tourbar=el('tourbar');
 function tourGo(i){
   tourI=i;
+  fling.vA=0; fling.vP=0;
   const t=TOUR[i];
   if (state.mode!==t.mode){
     state.mode=t.mode;
@@ -794,7 +872,7 @@ function cinemaStart(){
   state.isolate=null; repaint(); buildLabels();
   buildFlight();
   cinema.on=true; cinema.t=0; cinema.paused=false; cinema.slideI=0; cinema.slideTimer=0;
-  capActive=-2; uNBtarget=1;
+  capActive=-2; uNBtarget=1; fling.vA=0; fling.vP=0;
   document.body.classList.add('cinema'); document.body.classList.remove('cinehide');
   sizeBars();
   if(reduceMotion) cineSeek(SLIDE_T[0]);
@@ -891,6 +969,12 @@ el('abJ').textContent=DATA.journals.length;
 let born = reduceMotion? 1 : 0;
 const bornStart = performance.now();
 computeGroups(); repaint(); buildLabels();
+(function(){                        /* dissolve the boot screen into the entrance */
+  const b=document.getElementById('boot');
+  if (reduceMotion){ if(b) b.remove(); document.body.classList.remove('booting'); return; }
+  setTimeout(()=>{ if(b){ b.classList.add('bye'); setTimeout(()=>b.remove(), 700); }
+    document.body.classList.remove('booting'); }, 60);
+})();
 
 /* ---------- loop ---------- */
 addEventListener('resize', ()=>{
@@ -904,17 +988,43 @@ function frame(){
   requestAnimationFrame(frame);
   const nowT = performance.now();
   const dt = Math.min(.1, (nowT-prevFrameT)/1000); prevFrameT = nowT;   /* frame-rate independent */
-  if (born<1){
-    born=Math.min(1,(nowT-bornStart)/1400);
-    const e=born<.5?2*born*born:1-Math.pow(-2*born+2,2)/2;
-    points.material.opacity=1;
-    mat.uniforms.uScale.value=innerHeight*.5*(0.25+0.75*e);
-    contourGroup.children.forEach(c=>c.material.opacity=.55*e);
+  if (born<1){                       /* one choreographed entrance: contours, points, count */
+    const tms = nowT-bornStart;
+    born=Math.min(1, tms/2300);
+    const eP=x=>{ x=Math.min(1,Math.max(0,x)); return x<.5? 2*x*x : 1-Math.pow(-2*x+2,2)/2; };
+    mat.uniforms.uScale.value=innerHeight*.5*(0.25+0.75*eP((tms-280)/1400));
+    contourGroup.children.forEach((c,i)=>{ c.material.opacity=.55*eP((tms-(200+i*170))/520); });
+    if (tms<1700){
+      const ec=1-Math.pow(1-Math.min(1,Math.max(0,(tms-450)/1050)),3);
+      el('count').textContent=Math.round(N*ec).toLocaleString()+' papers';
+    } else if (born>=1) el('count').textContent=N.toLocaleString()+' papers';
+  }
+  if (stainStart>=0){                /* ease live colors toward targets: re-stain, don't flicker */
+    const k=1-Math.exp(-dt*9), done=nowT-stainStart>800;
+    for (let i=0;i<N;i++){
+      const i3=i*3;
+      if (done){ col[i3]=colT[i3]; col[i3+1]=colT[i3+1]; col[i3+2]=colT[i3+2];
+        alp[i]=alpT[i]; siz[i]=sizT[i]; pos[i3+1]=posYT[i]; }
+      else { col[i3]+=(colT[i3]-col[i3])*k; col[i3+1]+=(colT[i3+1]-col[i3+1])*k; col[i3+2]+=(colT[i3+2]-col[i3+2])*k;
+        alp[i]+=(alpT[i]-alp[i])*k; siz[i]+=(sizT[i]-siz[i])*k; pos[i3+1]+=(posYT[i]-pos[i3+1])*k; }
+    }
+    geo.attributes.aColor.needsUpdate=true; geo.attributes.aAlpha.needsUpdate=true;
+    geo.attributes.aSize.needsUpdate=true; geo.attributes.position.needsUpdate=true;
+    if (done) stainStart=-1;
+  }
+  if (tip.style.display==='block'){  /* the specimen card trails the cursor */
+    tipX+=(tipTX-tipX)*Math.min(1, dt*16); tipY+=(tipTY-tipY)*Math.min(1, dt*16);
+    tip.style.left=tipX+'px'; tip.style.top=tipY+'px';
   }
   const nb=mat.uniforms.uNearBlur.value;
   mat.uniforms.uNearBlur.value = nb + (uNBtarget-nb)*Math.min(1, dt*5);
   if (cinema.on) cinemaFrame(dt);
   else {
+    if (!reduceMotion && !dragging && (Math.abs(fling.vA)>.001 || Math.abs(fling.vP)>.001)){
+      ctl.tAzim += fling.vA*dt;
+      ctl.tPolar = Math.min(1.36, Math.max(.14, ctl.tPolar + fling.vP*dt));
+      const dk=Math.exp(-dt*3.3); fling.vA*=dk; fling.vP*=dk;
+    }
     if (!reduceMotion && tourI<0 && nowT-lastInteract>25000) ctl.tAzim += .0007;
     applyCam();
   }
@@ -927,6 +1037,8 @@ frame();
   try{
   window.__runAtlas(window.DATA);
   }catch(err){
+    const bb=document.getElementById('boot'); if(bb) bb.remove();
+    document.body.classList.remove('booting');
     const d=document.createElement('div');
     d.style.cssText='position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:14px sans-serif;color:#2B2A24;background:#F1EFE8;z-index:99';
     d.textContent='The map data failed to load. Reload the page, or open an issue on the repository.';
