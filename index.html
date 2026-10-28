@@ -39,13 +39,17 @@ body{background:var(--paper); color:var(--ink); font-family:var(--sans); font-si
 
 /* territory labels */
 .terr{position:absolute; transform:translate(-50%,-100%); padding-bottom:7px; white-space:nowrap; pointer-events:none;
-  font-family:var(--serif); font-style:italic; letter-spacing:.04em; color:var(--ink);
+  font-family:var(--serif); font-variant-caps:all-small-caps; letter-spacing:.13em; color:var(--ink);
   text-shadow:0 0 6px var(--paper), 0 0 2px var(--paper), 1px 1px 0 var(--paper), -1px -1px 0 var(--paper);
   transition:opacity .4s, transform .25s, text-shadow .25s}
 .terr::after{content:""; position:absolute; left:50%; bottom:0; width:1px; height:6px; background:var(--ink); opacity:.45}
 .terr.bleed{transform:translate(-50%,-100%) scale(1.05);
   text-shadow:0 0 7px var(--paper), 0 0 2px var(--paper), 1px 1px 0 var(--paper), -1px -1px 0 var(--paper), 0 0 12px rgba(43,42,36,.4)}
-.terr.minor{font-family:var(--sans); font-style:normal; letter-spacing:.03em; color:var(--ink-soft)}
+.terr.minor{font-family:var(--sans); font-variant-caps:normal; letter-spacing:.03em; color:var(--ink-soft)}
+#furniture{position:fixed; inset:0; pointer-events:none}
+.deg, .corner{position:absolute; transform:translate(-50%,-50%); white-space:nowrap; pointer-events:none;
+  font:9px var(--sans); letter-spacing:.06em; color:var(--ink-soft); opacity:0;
+  text-shadow:0 0 4px var(--paper), 0 0 2px var(--paper); transition:opacity .4s; font-variant-numeric:tabular-nums}
 .terr.minor::after{height:5px; opacity:.3}
 .terr small{font-family:var(--sans); font-style:normal; font-size:10px; color:var(--ink-soft); margin-left:6px; letter-spacing:.02em}
 
@@ -217,6 +221,7 @@ body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
 </div>
 <div id="stage"></div>
 <div id="labels"></div>
+<div id="furniture"></div>
 <div id="grain"></div>
 <div id="vignette"></div>
 
@@ -393,7 +398,7 @@ let neatMat;
 
 /* globe furniture: a paper sphere with its own graticule */
 const globeGroup = new THREE.Group(); globeGroup.visible=false; scene.add(globeGroup);
-let sphereMat, globeGratMat, shadowMat;
+let sphereMat, globeGratMat, shadowMat, eqMat;
 (function(){
   /* engraved-globe shading: limb darkening + ink rim at the silhouette (Rumsey/GitHub-globe lineage) */
   sphereMat = new THREE.ShaderMaterial({
@@ -461,6 +466,15 @@ let sphereMat, globeGratMat, shadowMat;
   const g=new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(v,3));
   globeGratMat = new THREE.LineBasicMaterial({color:0xB3AF9F, transparent:true, opacity:0});
   const lines=new THREE.LineSegments(g, globeGratMat); lines.renderOrder=2; globeGroup.add(lines);
+  /* the equator carries 1.5x weight, engraved-globe style: a doubled ring in a darker ink */
+  const ev=[];
+  for(const dy of [-0.12, 0.12]) for(let s=0;s<128;s++){
+    const a0=s/128*2*Math.PI, a1=(s+1)/128*2*Math.PI;
+    ev.push(GC.x+RG*Math.sin(a0), dy, GC.z+RG*Math.cos(a0), GC.x+RG*Math.sin(a1), dy, GC.z+RG*Math.cos(a1));
+  }
+  const eg=new THREE.BufferGeometry(); eg.setAttribute('position', new THREE.Float32BufferAttribute(ev,3));
+  eqMat = new THREE.LineBasicMaterial({color:0x9A957F, transparent:true, opacity:0});
+  const eql=new THREE.LineSegments(eg, eqMat); eql.renderOrder=2; globeGroup.add(eql);
 })();
 
 /* contours by marching squares */
@@ -734,6 +748,24 @@ function placeLabels(){
       if (!(v3.z<1 && sx>40 && sx<innerWidth-40 && sy>40 && sy<innerHeight-40)){ L.el.style.opacity=0; continue; }
       if (tryPlace(L, sx, sy, .85*minorF*lf)) shown++;
     }
+  }
+  /* plate furniture */
+  const degF = (globeMix>.95 && !cinema.on) ? Math.min(1, Math.max(0, (215-ctl.dist)/60)) : 0;
+  for (const D of degEls){
+    if (degF<=0){ D.el.style.opacity=0; continue; }
+    const facing = (D.x-GC.x)*cgx + (D.z-GC.z)*cgz > 0;
+    v3.set(D.x, D.y, D.z).project(camera);
+    D.el.style.opacity = (facing && v3.z<1) ? .8*degF : 0;
+    D.el.style.left=((v3.x*.5+.5)*innerWidth)+'px'; D.el.style.top=((-v3.y*.5+.5)*innerHeight)+'px';
+  }
+  const cornF = (globeMix<.05) ? lf : 0;
+  for (const C of cornerEls){
+    if (cornF<=0){ C.el.style.opacity=0; continue; }
+    v3.set(C.x, 0, C.z).project(camera);
+    const sx=(v3.x*.5+.5)*innerWidth, sy=(-v3.y*.5+.5)*innerHeight;
+    const vis = v3.z<1 && sx>8 && sx<innerWidth-8 && sy>8 && sy<innerHeight-8;
+    C.el.style.opacity = vis ? .7*cornF : 0;
+    C.el.style.left=sx+'px'; C.el.style.top=sy+'px';
   }
 }
 placeLabels.dirty=true;
@@ -1123,6 +1155,7 @@ function syncGlobeVis(){
   shadowMat.uniforms.uO.value=globeMix;
   mat.uniforms.uGlobeLight.value=globeMix;
   globeGratMat.opacity=.5*globeMix;
+  eqMat.opacity=.72*globeMix;
   globeContourMats.forEach(m=>m.opacity=.55*globeMix);
   globeGroup.visible=globeMix>.002;
   neatMat.opacity=.9*(1-globeMix);
@@ -1181,6 +1214,25 @@ if (innerWidth<760){ document.body.classList.add('collapsed'); el('collapse').te
 el('nAll').textContent=N.toLocaleString();
 el('abN').textContent=N.toLocaleString();
 el('abJ').textContent=DATA.journals.length;
+
+/* ---------- plate furniture: equator degrees (globe) + corner coordinates (flat) ---------- */
+const degEls=[], cornerEls=[];
+(function(){
+  const fur=el('furniture');
+  for(let i=0;i<12;i++){
+    const th=i*Math.PI/6;
+    const d=document.createElement('div'); d.className='deg'; d.textContent=(i*30)+'°';
+    fur.appendChild(d);
+    degEls.push({el:d, x:GC.x+GR*1.012*Math.sin(th), y:0, z:GC.z+GR*1.012*Math.cos(th)});
+  }
+  const corners=[[EXT.x0,EXT.z0,-1,-1],[EXT.x1,EXT.z0,1,-1],[EXT.x0,EXT.z1,-1,1],[EXT.x1,EXT.z1,1,1]];
+  for(const [wx,wz,ox,oz] of corners){
+    const dx=(wx/S+cx).toFixed(1), dy=(cy-wz/S).toFixed(1);
+    const d=document.createElement('div'); d.className='corner'; d.textContent=dx+', '+dy;
+    fur.appendChild(d);
+    cornerEls.push({el:d, x:wx+ox*2.6, z:wz+oz*2.6});
+  }
+})();
 
 /* ---------- load sequence ---------- */
 let born = reduceMotion? 1 : 0;
@@ -1249,7 +1301,11 @@ function frame(){
       ctl.tPolar = Math.min(polarMax, Math.max(.14, ctl.tPolar + fling.vP*dt));
       const dk=Math.exp(-dt*3.3); fling.vA*=dk; fling.vP*=dk;
     }
-    if (!reduceMotion && tourI<0 && nowT-lastInteract>(globeOn?8000:25000)) ctl.tAzim += globeOn? .0011 : .0007;
+    const idleT = nowT-lastInteract-(globeOn?8000:25000);
+    if (!reduceMotion && tourI<0 && idleT>0){
+      const r=Math.min(1, idleT/6000);          /* the spin wakes imperceptibly */
+      ctl.tAzim += (globeOn? .0011 : .0007)*r*r;
+    }
     applyCam();
   }
   placeLabels();
