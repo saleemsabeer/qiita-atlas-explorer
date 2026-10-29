@@ -237,11 +237,18 @@ body.cinehide #compass, body.cinehide #axisbadge, body.cinehide #scalebar{opacit
   #cartouche{width:min(300px, calc(100% - 70px))}
   #hint{display:none}
   .modes{grid-template-columns:1fr}
+  #cinecap{white-space:normal; max-width:92vw}
   #cinecap .cc1{font-size:18px}
   #cinecap .cc1 span{font-size:12px}
-  #cinecard .bt{font-size:32px}
+  #cinecard{white-space:normal; max-width:94vw}
+  #cinecard .bt{font-size:32px; white-space:nowrap}
   #cinecard .bs{font-size:12.5px; white-space:normal}
+  #terrcard{bottom:84px; max-width:92vw}
+  #axisbadge{max-width:60vw; text-align:right}
 }
+#terrcard .tf{white-space:normal}
+#collapse{z-index:21}
+body.collapsed #cartouche{z-index:21}
 </style>
 </head>
 <body class="booting">
@@ -300,6 +307,7 @@ body.cinehide #compass, body.cinehide #axisbadge, body.cinehide #scalebar{opacit
   <div class="foot">
     <span>MONDO 2026-09-01</span>
     <a href="#" id="aboutLink">About this map</a>
+    <a href="#" id="shareLink">Share this view</a>
     <a href="https://github.com/saleemsabeer/qiita-atlas-explorer" id="srcLink">Source</a>
   </div>
 </aside>
@@ -627,6 +635,50 @@ function scalebarTick(nowMs){
 addEventListener('keydown', e=>{
   if(e.key==='g'||e.key==='G'){ gratOn=!gratOn; syncGlobeVis(); }
 });
+
+/* ---------- share this view: the state as a URL hash ---------- */
+function viewToHash(){
+  const r=v=>Math.round(v*100)/100;
+  const q=[ 'v='+(globeOn?'g':'f'), 'm='+state.mode, 'lv='+state.level,
+    'i='+(state.isolate==null?'-':state.isolate), 'y0='+state.y0, 'y1='+state.y1,
+    'x='+r(ctl.tTarget.x), 'z='+r(ctl.tTarget.z), 'd='+r(ctl.tDist),
+    'a='+r(ctl.tAzim), 'p='+r(ctl.tPolar) ];
+  return '#'+q.join('&');
+}
+function applyHash(){
+  if(!location.hash || location.hash.length<4) return;
+  try{
+    const h={}; location.hash.slice(1).split('&').forEach(kv=>{ const [k,v]=kv.split('='); h[k]=v; });
+    if(h.m && ['site','mondo','group8','cluster'].includes(h.m)){
+      state.mode=h.m; state.level=Math.min(8, Math.max(1, +h.lv||3));
+      el('depth').value=state.level; el('depthout').textContent=state.level;
+      document.querySelectorAll('#stainrow button').forEach(x=>x.classList.toggle('on', x.dataset.mode===h.m));
+      el('depthrow').style.display=h.m==='mondo'?'flex':'none';
+      computeGroups();
+    }
+    if(h.i && h.i!=='-' && state.colorOf.has(+h.i)) state.isolate=+h.i;
+    if(h.y0){ state.y0=Math.min(yrMax, Math.max(yrMin, +h.y0)); el('y0').value=state.y0; el('y0out').textContent=state.y0; }
+    if(h.y1){ state.y1=Math.min(yrMax, Math.max(state.y0, +h.y1)); el('y1').value=state.y1; el('y1out').textContent=state.y1; }
+    repaint(); buildLabels();
+    if(h.v==='g') setGlobe(true, true);
+    if(h.d){
+      ctl.tTarget.set(+h.x||CENTER.x, 0, +h.z||CENTER.z); clampTarget();
+      ctl.tDist=Math.min(300, Math.max(distMin, +h.d||112));
+      ctl.tAzim=+h.a||0;
+      ctl.tPolar=Math.min(polarMax, Math.max(.14, +h.p||.72));
+      ctl.target.copy(ctl.tTarget); ctl.dist=ctl.tDist; ctl.azim=ctl.tAzim; ctl.polar=ctl.tPolar;
+    }
+  }catch(err){ console.warn('share link ignored:', err); }
+}
+el('shareLink').onclick=e=>{
+  e.preventDefault();
+  const url=location.href.split('#')[0]+viewToHash();
+  const a=el('shareLink'), old='Share this view';
+  const done=ok=>{ a.textContent=ok?'Link copied':'Copy failed'; setTimeout(()=>a.textContent=old, 1600); };
+  if(navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(url).then(()=>done(true), ()=>{ location.hash=viewToHash(); done(false); });
+  else { location.hash=viewToHash(); done(false); }
+};
 (function(){
   const levels=[.09,.2,.38,.6].map(f=>f*dmax);
   const X=i=>EXT.x0+gw*i/(G-1), Z=i=>EXT.z0+gh*i/(G-1);
@@ -1453,7 +1505,9 @@ function sizeBars(){
   document.querySelectorAll('#cinebars .bar').forEach(b=>b.style.height=H+'px');
   el('cinecap').style.bottom=(H+28)+'px';
   el('compass').style.bottom=(cinema.on? H+14 : 18)+'px';
-  el('axisbadge').style.bottom=(cinema.on? H+14 : 52)+'px';
+  const bd=el('axisbadge');
+  if (cinema.on && innerWidth<760){ bd.style.bottom='auto'; bd.style.top=(H+10)+'px'; }
+  else { bd.style.top='auto'; bd.style.bottom=(cinema.on? H+14 : 52)+'px'; }
   const sb=el('scalebar');
   sb.style.bottom=(cinema.on? H+16 : 18)+'px';
   sb.style.left=cinema.on? '110px' : '50%';
@@ -1703,6 +1757,7 @@ const degEls=[], cornerEls=[];
 let born = reduceMotion? 1 : 0;
 const bornStart = performance.now();
 computeGroups(); repaint(); buildLabels();
+applyHash();                        /* restore a shared view, if the URL carries one */
 (function(){                        /* dissolve the boot screen into the entrance */
   const b=document.getElementById('boot');
   if (reduceMotion){ if(b) b.remove(); document.body.classList.remove('booting'); return; }
@@ -1731,7 +1786,8 @@ function frame(){
     if (tms<1700){
       const ec=1-Math.pow(1-Math.min(1,Math.max(0,(tms-450)/1050)),3);
       el('count').textContent=Math.round(N*ec).toLocaleString()+' papers';
-    } else if (born>=1) el('count').textContent=N.toLocaleString()+' papers';
+    } else if (born>=1) el('count').textContent = inView===N ? N.toLocaleString()+' papers'
+      : inView.toLocaleString()+' of '+N.toLocaleString()+' papers';
   }
   if (stainStart>=0){                /* ease live colors toward targets: re-stain, don't flicker */
     const k=1-Math.exp(-dt*9), done=nowT-stainStart>800;
