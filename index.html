@@ -716,8 +716,8 @@ el('shareLink').onclick=e=>{
 /* ---------- microbe-disease associations: renderer for a layer that only
    exists once the paper's own extraction provides it (see SCHEMA.md).
    With no associations.js, none of this UI exists. ---------- */
-let assocActive=false;
-function assocClearPaint(){ if(assocActive){ assocActive=false; repaint(); } }
+let assocActive=false, assocReapply=null;
+function assocClearPaint(){ if(assocActive){ assocActive=false; assocReapply=null; repaint(); } }
 (function(){
   const s=document.createElement('script');
   s.src='associations.js';
@@ -763,13 +763,18 @@ function initAssoc(){
   function showDiseases(filter){
     sum.textContent=''; list.innerHTML='';
     const f=(filter||'').toLowerCase();
-    for(const d of diseases.filter(d=>!f || d.name.toLowerCase().includes(f)).slice(0,8)){
+    const match=diseases.filter(d=>!f || d.name.toLowerCase().includes(f));
+    for(const d of match.slice(0,40)){
       const row=document.createElement('div'); row.className='arow';
       row.innerHTML='<span class="an"></span><span class="ac"></span>';
       row.querySelector('.an').textContent=d.name;
       row.querySelector('.ac').textContent=d.ts.length+(d.ts.length===1?' microbe':' microbes');
       row.onclick=()=>showMicrobes(d);
       list.appendChild(row);
+    }
+    if(match.length>40){
+      const e=document.createElement('div'); e.className='aempty';
+      e.textContent='… '+(match.length-40)+' more — type above to find a disease'; list.appendChild(e);
     }
     if(!list.children.length){
       const e=document.createElement('div'); e.className='aempty';
@@ -815,6 +820,7 @@ function initAssoc(){
     stainStart=performance.now(); assocActive=true;
   }
   function assocShow(t, d){
+    assocReapply=()=>assocShow(t, d);
     const enr=new Set([].concat(...t.enr.map(r=>r.papers)));
     const dep=new Set([].concat(...t.dep.map(r=>r.papers)));
     paint(enr, dep);
@@ -827,6 +833,7 @@ function initAssoc(){
     card.classList.add('show');
   }
   function assocShowAll(d){
+    assocReapply=()=>assocShowAll(d);
     const enr=new Set(), dep=new Set();
     for(const t of d.ts){
       for(const r of t.enr) r.papers.forEach(i=>enr.add(i));
@@ -837,7 +844,7 @@ function initAssoc(){
     const card=el('terrcard');
     card.querySelector('.tn').textContent=d.name;
     card.querySelector('.tf').textContent=d.ne+' enriched · '+d.nd+' depleted'+
-      (d.nc? ' · '+d.nc+' contested':'')+' microbes — '+nPap+' papers · ▲ filled, ▽ open ring';
+      (d.nc? ' · '+d.nc+' contested':'')+' microbes — '+nPap+(nPap===1?' paper':' papers')+' · ▲ filled, ▽ open ring';
     card.classList.add('show');
   }
   function assocPapers(t, d){
@@ -1862,7 +1869,11 @@ function setGlobe(on, snap){
   }
   placeLabels.dirty=true; lastInteract=performance.now(); hideTerrCard();
 }
-document.querySelectorAll('#viewrow button').forEach(b=>{ b.onclick=()=>setGlobe(b.dataset.view==='globe'); });
+document.querySelectorAll('#viewrow button').forEach(b=>{ b.onclick=()=>{
+  const re=assocActive? assocReapply : null;          /* an active disease signature survives the projection change */
+  setGlobe(b.dataset.view==='globe');
+  if(re) re();
+}; });
 
 /* ---------- featured territories: legend click flies there (Half-Earth pattern) ---------- */
 function hideTerrCard(){ el('terrcard').classList.remove('show'); el('apapers').classList.remove('show'); assocClearPaint(); }
