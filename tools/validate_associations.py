@@ -11,11 +11,12 @@ arrives. Any validation error exits 1 and emits nothing.
 import csv, json, os, sys
 
 def main(argv):
-    args = [a for a in argv if not a.startswith('-o')]
-    out = None
+    out = label = None
     if '-o' in argv:
         out = argv[argv.index('-o') + 1]
-        args = [a for a in argv if a != '-o' and a != out]
+    if '--label' in argv:
+        label = argv[argv.index('--label') + 1]
+    args = [a for a in argv if a not in ('-o', out, '--label', label)]
     if len(args) != 2:
         print(__doc__); return 1
     csv_path, data_path = args
@@ -76,6 +77,8 @@ def main(argv):
     if out:
         js = 'window.ASSOC =\n' + json.dumps(rows, ensure_ascii=False, indent=1) + '\n;\n'
         assert json.loads(js[len('window.ASSOC =\n'):-len('\n;\n')]) == rows
+        if label:
+            js += 'window.ASSOC_META = ' + json.dumps({'label': label}, ensure_ascii=False) + ';\n'
         open(out, 'w', encoding='utf-8').write(js)
         print('wrote', out)
     return 0
