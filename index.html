@@ -177,7 +177,23 @@ body.cinema #terrcard{display:none}
 .arow .ag{width:14px; text-align:center; color:var(--ink); flex:0 0 auto}
 .arow .at{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-style:italic}
 .aback{color:var(--ink-soft); font-size:11.5px}
+.aall{color:var(--ink); font-size:11.5px; font-variant-caps:all-small-caps; letter-spacing:.08em}
 .aempty{font-size:11.5px; color:var(--ink-soft); padding:4px}
+.alabel{font-size:10.5px; color:var(--ink-soft); font-variant-caps:all-small-caps; letter-spacing:.07em; margin:-4px 0 4px}
+#assocSum{font-size:11px; color:var(--ink-soft); margin:2px 4px 4px; font-variant-numeric:tabular-nums}
+#assocSum:empty{display:none}
+.apm{cursor:pointer; text-decoration:underline dotted}
+#apapers{position:fixed; right:18px; top:64px; z-index:48; width:min(340px, 92vw); max-height:60vh; overflow-y:auto;
+  background:var(--card); border:1px solid var(--ink); box-shadow:2px 2px 0 rgba(63,58,42,.15);
+  padding:10px 12px; display:none}
+#apapers.show{display:block}
+#apapers .aph{font-family:var(--serif); font-size:13px; margin-bottom:6px; padding-right:22px}
+#apapers .apl{list-style:none; font-size:11.5px; line-height:1.45}
+#apapers .apl li{margin-bottom:6px}
+#apapers .apl a{color:var(--ink)}
+#apapers .apmore{color:var(--ink-soft)}
+#apapersClose{position:absolute; top:4px; right:4px; border:1px solid var(--rule); background:var(--card);
+  width:20px; height:20px; cursor:pointer; font-size:11px; line-height:1}
 
 /* quiet details */
 :focus-visible{outline:2px solid var(--ink); outline-offset:2px}
@@ -330,6 +346,7 @@ body.collapsed #cartouche{z-index:21}
 
 <div id="count"></div>
 <div id="terrcard"><div class="tn"></div><div class="tf"></div></div>
+<div id="apapers"><button id="apapersClose" title="Close">&#215;</button><div class="aph"></div><ul class="apl"></ul></div>
 <div id="tip"><div class="spec"><i class="dot"></i><span class="j"></span><span class="y"></span></div><div class="t"></div><div class="m"></div></div>
 
 <div id="tourbar">
@@ -712,22 +729,45 @@ function initAssoc(){
   const A=window.ASSOC, host=el('assoc');
   const byDisease=new Map();
   for(const r of A){ if(!byDisease.has(r.mondo)) byDisease.set(r.mondo, []); byDisease.get(r.mondo).push(r); }
-  const diseases=[...byDisease.entries()]
-    .map(([m,rs])=>({m, name:(nodes[m]&&nodes[m].name)||('node '+m), rs, n:rs.length}))
-    .sort((a,b)=>b.n-a.n);
+  /* aggregate per disease into taxa with direction sets (contested = both ways) */
+  const diseases=[...byDisease.entries()].map(([m,rs])=>{
+    const taxa=new Map();
+    for(const r of rs){
+      const key=r.taxon.toLowerCase();
+      if(!taxa.has(key)) taxa.set(key, {taxon:r.taxon, enr:[], dep:[], notes:[]});
+      const t=taxa.get(key);
+      (r.dir==='enriched'? t.enr : t.dep).push(r);
+      if(r.note) t.notes.push(r.note);
+    }
+    const ts=[...taxa.values()].map(t=>{
+      t.papers=[...new Set([].concat(...t.enr.map(r=>r.papers), ...t.dep.map(r=>r.papers)))];
+      t.kind = t.enr.length && t.dep.length ? 'contested' : (t.enr.length? 'enriched' : 'depleted');
+      return t;
+    });
+    const ord={enriched:0, depleted:1, contested:2};
+    ts.sort((a,b)=> ord[a.kind]-ord[b.kind] || b.papers.length-a.papers.length);
+    return {m, name:(nodes[m]&&nodes[m].name)||('node '+m), ts,
+      ne:ts.filter(t=>t.kind==='enriched').length,
+      nd:ts.filter(t=>t.kind==='depleted').length,
+      nc:ts.filter(t=>t.kind==='contested').length};
+  }).sort((a,b)=>b.ts.length-a.ts.length);
+  const meta=window.ASSOC_META||{};
   host.innerHTML='<p class="sect">Associations <span class="ah">(microbe–disease)</span></p>'+
+    (meta.label? '<p class="alabel"></p>' : '')+
     '<input id="assocQ" type="search" placeholder="find a disease…">'+
-    '<div id="assocList"></div>';
+    '<div id="assocSum"></div><div id="assocList"></div>';
+  if(meta.label) host.querySelector('.alabel').textContent=meta.label;
   host.style.display='block';
-  const list=host.querySelector('#assocList'), q=host.querySelector('#assocQ');
+  const list=host.querySelector('#assocList'), q=host.querySelector('#assocQ'), sum=host.querySelector('#assocSum');
+  const glyph=k=> k==='enriched'? '▲' : k==='depleted'? '▽' : '▲▽';
   function showDiseases(filter){
-    list.innerHTML='';
+    sum.textContent=''; list.innerHTML='';
     const f=(filter||'').toLowerCase();
     for(const d of diseases.filter(d=>!f || d.name.toLowerCase().includes(f)).slice(0,8)){
       const row=document.createElement('div'); row.className='arow';
       row.innerHTML='<span class="an"></span><span class="ac"></span>';
       row.querySelector('.an').textContent=d.name;
-      row.querySelector('.ac').textContent=d.n+(d.n===1?' microbe':' microbes');
+      row.querySelector('.ac').textContent=d.ts.length+(d.ts.length===1?' microbe':' microbes');
       row.onclick=()=>showMicrobes(d);
       list.appendChild(row);
     }
@@ -738,41 +778,90 @@ function initAssoc(){
   }
   function showMicrobes(d){
     list.innerHTML='';
+    sum.textContent=d.ts.length+(d.ts.length===1?' microbe: ':' microbes: ')+d.ne+' enriched · '+
+      d.nd+' depleted'+(d.nc? ' · '+d.nc+' contested':'');
     const back=document.createElement('div'); back.className='arow aback';
     back.textContent='← diseases'; back.onclick=()=>{ q.value=''; showDiseases(''); };
     list.appendChild(back);
-    const rs=[...d.rs].sort((a,b)=> a.dir===b.dir ? b.papers.length-a.papers.length : (a.dir==='enriched'? -1 : 1));
-    for(const r of rs){
+    const all=document.createElement('div'); all.className='arow aall';
+    all.textContent='stain all on the map';
+    all.onclick=()=>assocShowAll(d);
+    list.appendChild(all);
+    for(const t of d.ts){
       const row=document.createElement('div'); row.className='arow';
-      row.innerHTML='<span class="ag"></span><span class="at"></span><span class="ac"></span>';
-      row.querySelector('.ag').textContent = r.dir==='enriched' ? '▲' : '▽';
-      row.querySelector('.at').textContent = r.taxon;
-      row.querySelector('.ac').textContent = r.papers.length;
-      if(r.note) row.title=r.note;
-      row.onclick=()=>assocShow(r, d);
+      row.innerHTML='<span class="ag"></span><span class="at"></span><span class="ac apm"></span>';
+      row.querySelector('.ag').textContent=glyph(t.kind);
+      row.querySelector('.at').textContent=t.taxon;
+      const pm=row.querySelector('.apm');
+      pm.textContent=t.papers.length; pm.title='show the supporting papers';
+      if(t.notes.length) row.title=t.notes.join(' · ');
+      row.onclick=()=>assocShow(t, d);
+      pm.onclick=e=>{ e.stopPropagation(); assocPapers(t, d); };
       list.appendChild(row);
     }
   }
-  function assocShow(r, d){
-    const sp=new Set(r.papers);
+  function paint(enrSet, depSet){
     for(let i=0;i<N;i++){
       const k=state.keys[i];
-      let c=state.colorOf.get(k)||MUTED, a=.1;
-      if(sp.has(i)) a=.95; else c=MUTED;
+      const e=enrSet.has(i), dp=depSet.has(i);
+      let c=state.colorOf.get(k)||MUTED, a=.1, dir=0;
+      if(e||dp){ a=.95; dir = e? 1 : 2; }   /* a paper claimed both ways renders filled */
+      else c=MUTED;
       tmpC.set(c);
       colT[i*3]=tmpC.r; colT[i*3+1]=tmpC.g; colT[i*3+2]=tmpC.b;
-      alpT[i]=a;
+      alpT[i]=a; dirArr[i]=dir;
     }
+    geo.attributes.aDir.needsUpdate=true; assocDirDirty=true;
     stainStart=performance.now(); assocActive=true;
+  }
+  function assocShow(t, d){
+    const enr=new Set([].concat(...t.enr.map(r=>r.papers)));
+    const dep=new Set([].concat(...t.dep.map(r=>r.papers)));
+    paint(enr, dep);
     const card=el('terrcard');
-    card.querySelector('.tn').textContent=r.taxon;
-    card.querySelector('.tf').textContent=(r.dir==='enriched'?'▲ enriched':'▽ depleted')+
-      ' in '+d.name+' — '+r.papers.length+(r.papers.length===1?' paper':' papers')+(r.note? ' · '+r.note : '');
+    card.querySelector('.tn').textContent=t.taxon;
+    card.querySelector('.tf').textContent = t.kind==='contested'
+      ? '▲ '+enr.size+' · ▽ '+dep.size+' papers disagree on '+d.name+' (contested)'
+      : (t.kind==='enriched'? '▲ enriched':'▽ depleted')+' in '+d.name+' — '+
+        t.papers.length+(t.papers.length===1?' paper':' papers');
     card.classList.add('show');
+  }
+  function assocShowAll(d){
+    const enr=new Set(), dep=new Set();
+    for(const t of d.ts){
+      for(const r of t.enr) r.papers.forEach(i=>enr.add(i));
+      for(const r of t.dep) r.papers.forEach(i=>dep.add(i));
+    }
+    paint(enr, dep);
+    const nPap=new Set([...enr, ...dep]).size;
+    const card=el('terrcard');
+    card.querySelector('.tn').textContent=d.name;
+    card.querySelector('.tf').textContent=d.ne+' enriched · '+d.nd+' depleted'+
+      (d.nc? ' · '+d.nc+' contested':'')+' microbes — '+nPap+' papers · ▲ filled, ▽ open ring';
+    card.classList.add('show');
+  }
+  function assocPapers(t, d){
+    const ap=el('apapers');
+    ap.querySelector('.aph').textContent=t.taxon+' · '+d.name;
+    const ul=ap.querySelector('.apl'); ul.innerHTML='';
+    for(const i of t.papers.slice(0,10)){
+      const li=document.createElement('li'), a=document.createElement('a');
+      a.textContent=P[i][F.title]+' ('+P[i][F.year]+')';
+      a.href='https://pubmed.ncbi.nlm.nih.gov/'+P[i][F.pmid]+'/'; a.target='_blank'; a.rel='noopener';
+      li.appendChild(a); ul.appendChild(li);
+    }
+    if(t.papers.length>10){
+      const li=document.createElement('li'); li.className='apmore';
+      li.textContent='…and '+(t.papers.length-10)+' more';
+      ul.appendChild(li);
+    }
+    ap.classList.add('show');
   }
   q.addEventListener('input', ()=>showDiseases(q.value));
   showDiseases('');
-  window.__assoc={ count:()=>{ let n=0; for(let i=0;i<N;i++) if(alpT[i]>.5) n++; return n; } };
+  el('apapersClose').onclick=()=>el('apapers').classList.remove('show');
+  window.__assoc={ count:()=>{ let n=0; for(let i=0;i<N;i++) if(alpT[i]>.5) n++; return n; },
+    dirs:()=>{ let f=0,r2=0; for(let i=0;i<N;i++){ if(dirArr[i]===1)f++; if(dirArr[i]===2)r2++; } return {filled:f, ring:r2}; } };
 }
 (function(){
   const levels=[.09,.2,.38,.6].map(f=>f*dmax);
@@ -820,6 +909,9 @@ for(let i=0;i<N;i++){ pos[i*3]=WX[i]; pos[i*3+1]=0; pos[i*3+2]=WZ[i]; }
 geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
 geo.setAttribute('aGlobe', new THREE.BufferAttribute(GP,3));
 geo.setAttribute('aDens', new THREE.BufferAttribute(DENS,1));
+const dirArr = new Float32Array(N);   /* 0 none, 1 enriched = filled, 2 depleted = open ring */
+geo.setAttribute('aDir', new THREE.BufferAttribute(dirArr,1));
+let assocDirDirty=false;
 geo.setAttribute('aColor', new THREE.BufferAttribute(col,3));
 geo.setAttribute('aAlpha', new THREE.BufferAttribute(alp,1));
 geo.setAttribute('aSize', new THREE.BufferAttribute(siz,1));
@@ -827,10 +919,10 @@ const mat = new THREE.ShaderMaterial({
   transparent:true, depthWrite:false,
   uniforms:{ uScale:{value: innerHeight*.5}, uFogColor:{value:new THREE.Color(PAPER)}, uFogNear:{value:160}, uFogFar:{value:330}, uNearBlur:{value:0}, uGlobe:{value:0},
     uGlobeLight:{value:0}, uGC:{value:new THREE.Vector3(GC.x,0,GC.z)} },
-  vertexShader:`attribute vec3 aColor, aGlobe; attribute float aAlpha, aSize, aDens;
-    varying vec3 vC; varying float vA, vDepth, vNB; uniform float uScale, uNearBlur, uGlobe, uGlobeLight;
+  vertexShader:`attribute vec3 aColor, aGlobe; attribute float aAlpha, aSize, aDens, aDir;
+    varying vec3 vC; varying float vA, vDepth, vNB, vDir; uniform float uScale, uNearBlur, uGlobe, uGlobeLight;
     uniform vec3 uGC;
-    void main(){ vA=aAlpha;
+    void main(){ vA=aAlpha; vDir=aDir;
       vec3 pMix = mix(position, aGlobe, uGlobe);
       vec4 mv = modelViewMatrix * vec4(pMix,1.0);
       vDepth = -mv.z;
@@ -840,13 +932,15 @@ const mat = new THREE.ShaderMaterial({
       float wrap = clamp(dot(normalize(pMix-uGC), normalize(cameraPosition-uGC))*.5+.5, 0.0, 1.0);
       cc *= mix(1.0, 0.82 + 0.18*wrap, uGlobeLight);
       vC = cc;
-      gl_PointSize = clamp(aSize * uScale / vDepth, 1.3, 10.0) * (1.0 + 1.5*vNB) * mix(0.90, 1.15, aDens);
+      gl_PointSize = clamp(aSize * uScale / vDepth, 1.3, 10.0) * (1.0 + 1.5*vNB) * mix(0.90, 1.15, aDens)
+                     * (aDir>0.5 ? 1.5 : 1.0);
       gl_Position = projectionMatrix * mv; }`,
-  fragmentShader:`varying vec3 vC; varying float vA, vDepth, vNB;
+  fragmentShader:`varying vec3 vC; varying float vA, vDepth, vNB, vDir;
     uniform vec3 uFogColor; uniform float uFogNear, uFogFar;
     void main(){ vec2 d = gl_PointCoord - vec2(.5);
       float r = length(d);
       float edge = smoothstep(.5, mix(.36, .08, vNB), r);
+      if (vDir > 1.5) edge *= smoothstep(.13, .28, r);   /* depleted renders as an open ring */
       if (edge < .01) discard;
       float fog = smoothstep(uFogNear, uFogFar, vDepth);
       vec3 cRim = vC * .78;
@@ -912,6 +1006,7 @@ function repaint(){
     alpT[i]=a; sizT[i]=s;
     posYT[i] = state.relief ? DENS[i]*DENS[i]*14 : 0;
   }
+  if (assocDirDirty){ dirArr.fill(0); geo.attributes.aDir.needsUpdate=true; assocDirDirty=false; }
   if (stainSnap || reduceMotion){
     col.set(colT); alp.set(alpT); siz.set(sizT);
     for(let i=0;i<N;i++) pos[i*3+1]=posYT[i];
@@ -1770,7 +1865,7 @@ function setGlobe(on, snap){
 document.querySelectorAll('#viewrow button').forEach(b=>{ b.onclick=()=>setGlobe(b.dataset.view==='globe'); });
 
 /* ---------- featured territories: legend click flies there (Half-Earth pattern) ---------- */
-function hideTerrCard(){ el('terrcard').classList.remove('show'); assocClearPaint(); }
+function hideTerrCard(){ el('terrcard').classList.remove('show'); el('apapers').classList.remove('show'); assocClearPaint(); }
 function terrFact(k, n){
   const yrs=new Map();
   for(let i=0;i<N;i++){ if(state.keys[i]!==k) continue;
