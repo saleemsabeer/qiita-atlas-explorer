@@ -1258,7 +1258,11 @@ function placeLabels(){
   /* association labels claim space first while a signature is stained */
   let aF=0;
   if (assocActive && assocLab.length){
-    aF=Math.min(1,(performance.now()-stainStart)/800)*lf;
+    /* the cold-open's association labels are the shot's content: they are
+       exempt from the flyover's settle-first label rule (morph gate stays) */
+    let lf2=lf;
+    if (cinema.on && cinema.shot===0 && cinema.fin && !(globeMix>.05 && globeMix<.95)) lf2=1;
+    aF=Math.min(1,(performance.now()-stainStart)/800)*lf2;
     const rects=[];
     for(const id of ['terrcard','cinecard','cinecap']){
       const e=el(id); if(e.classList.contains('show')) rects.push(e.getBoundingClientRect());
@@ -1772,6 +1776,7 @@ function buildFlight2(){
     }
     if(assocFinale){   /* layer totals land just before the honesty card */
       const T=assocFinale.totals;
+      F2.caps[0].b += ' — opening on its '+T.R+' extracted microbe–disease claims';
       F2.caps.splice(F2.caps.length-1, 0, {t0:74.5, t1:76.5,
         a:'<i>microbe–disease associations</i><span>'+T.R+' claims · '+T.D+' diseases · '+T.P+' papers</span>',
         b:(window.ASSOC_META&&window.ASSOC_META.label)? esc(window.ASSOC_META.label) : ''});
@@ -1987,10 +1992,12 @@ function cinemaFrame(dt){
     const vi=Math.max(0, Math.min(2, Math.floor((t-50)/4)));
     if(vi!==cinema.tourI){ cinema.tourI=vi; assocCineShow(assocTour[vi]); }
   } else if(cinema.shot===4 && !cinema.half && t>=56.25){ cinema.half=true; cineStain('isoB'); }
-  if(cinema.shot===6 && assocFinale && t>=75){     /* the whole layer, paged under the honesty card */
+  /* the whole layer: a cold-open during S1's pull-out, and the finale under the honesty card */
+  if(assocFinale && (cinema.shot===0 || (cinema.shot===6 && t>=75))){
     if(!cinema.fin){ cinema.fin=true; cinema.lost=new Set(); assocFinale.paintAll(); }
     const P=assocFinale.pages.length;
-    const pi=P>1? Math.floor((t-75)/2.8)%P : 0;
+    const base = cinema.shot===0? t : t-75;
+    const pi=P>1? Math.floor(base/2.8)%P : 0;
     if(pi!==cinema.pageI){
       if(cinema.pageI>=0) for(const L of assocLab){
         if(!L.key) continue;
