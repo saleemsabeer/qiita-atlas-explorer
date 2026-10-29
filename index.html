@@ -110,7 +110,7 @@ input[type=range]{flex:1; accent-color:var(--ink); height:18px}
 .check{display:flex; align-items:center; gap:7px; margin-top:9px; font-size:12.5px; color:var(--ink-soft); cursor:pointer}
 .check input{accent-color:var(--ink)}
 #reliefnote{display:none; font-size:11px; color:var(--ink-soft); margin-top:5px; font-style:italic}
-.foot{padding:8px 18px 10px; border-top:1px solid var(--rule); font-size:11px; color:var(--ink-soft); display:flex; gap:10px; align-items:center}
+.foot{padding:8px 18px 10px; border-top:1px solid var(--rule); font-size:11px; color:var(--ink-soft); display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; white-space:nowrap}
 .foot a{color:var(--ink-soft)}
 #collapse{position:absolute; top:-1px; right:-1px; border:1px solid var(--ink); background:var(--card); width:26px; height:26px; cursor:pointer; font-size:13px; line-height:1}
 body.collapsed #cartouche .inner, body.collapsed #cartouche .foot{display:none}
@@ -164,6 +164,20 @@ body.collapsed #cartouche::after{content:"Qiita Atlas"; font-family:var(--serif)
 #terrcard .tn{font-family:var(--serif); font-variant-caps:all-small-caps; letter-spacing:.12em; font-size:16px}
 #terrcard .tf{font-size:12px; color:var(--ink-soft); margin-top:2px; font-variant-numeric:tabular-nums}
 body.cinema #terrcard{display:none}
+
+/* associations drawer (absent until real data exists) */
+#assoc{display:none}
+#assoc .ah{font-style:normal; font-size:11px}
+#assocQ{width:100%; font:12px var(--sans); color:var(--ink); background:var(--paper); border:1px solid var(--rule); padding:5px 8px; margin:2px 0 6px}
+#assocQ:focus{outline:none; border-color:var(--ink)}
+.arow{display:flex; align-items:center; gap:8px; padding:4px; cursor:pointer; font-size:12.5px; border:1px solid transparent}
+.arow:hover{background:var(--paper)}
+.arow .an{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.arow .ac{font-size:11px; color:var(--ink-soft); font-variant-numeric:tabular-nums}
+.arow .ag{width:14px; text-align:center; color:var(--ink); flex:0 0 auto}
+.arow .at{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-style:italic}
+.aback{color:var(--ink-soft); font-size:11.5px}
+.aempty{font-size:11.5px; color:var(--ink-soft); padding:4px}
 
 /* quiet details */
 :focus-visible{outline:2px solid var(--ink); outline-offset:2px}
@@ -220,8 +234,9 @@ body.cinehide #cinebars .bar{height:0!important}
 body.cinehide #cinecap, body.cinehide #cinecard{opacity:0!important}
 
 /* orientation overlays (Harrower & Sheesley: compass + grid + monorail) */
-#compass{position:fixed; left:18px; bottom:18px; z-index:47; opacity:.92; pointer-events:none;
+#compass{position:fixed; left:18px; bottom:18px; z-index:19; opacity:.92; pointer-events:none;
   transition:bottom .9s cubic-bezier(.65,0,.35,1)}
+body.cinema #compass{z-index:47}
 #axisbadge{position:fixed; right:18px; bottom:52px; z-index:47; background:var(--card); border:1px solid var(--rule);
   font:10.5px var(--sans); letter-spacing:.08em; font-variant-caps:all-small-caps; color:var(--ink-soft);
   padding:4px 10px; opacity:0; transition:opacity .4s, bottom .9s cubic-bezier(.65,0,.35,1); pointer-events:none;
@@ -283,6 +298,7 @@ body.collapsed #cartouche{z-index:21}
     </div>
     <p class="sect">Legend <span style="font-style:normal;font-size:11px">(click to isolate)</span></p>
     <ul id="legend"></ul>
+    <div id="assoc"></div>
     <p class="sect">Years</p>
     <div class="years">
       <output id="y0out">2010</output>
@@ -679,6 +695,85 @@ el('shareLink').onclick=e=>{
     navigator.clipboard.writeText(url).then(()=>done(true), ()=>{ location.hash=viewToHash(); done(false); });
   else { location.hash=viewToHash(); done(false); }
 };
+
+/* ---------- microbe-disease associations: renderer for a layer that only
+   exists once the paper's own extraction provides it (see SCHEMA.md).
+   With no associations.js, none of this UI exists. ---------- */
+let assocActive=false;
+function assocClearPaint(){ if(assocActive){ assocActive=false; repaint(); } }
+(function(){
+  const s=document.createElement('script');
+  s.src='associations.js';
+  s.onload=()=>{ if(Array.isArray(window.ASSOC) && window.ASSOC.length) initAssoc(); };
+  s.onerror=()=>{};
+  document.head.appendChild(s);
+})();
+function initAssoc(){
+  const A=window.ASSOC, host=el('assoc');
+  const byDisease=new Map();
+  for(const r of A){ if(!byDisease.has(r.mondo)) byDisease.set(r.mondo, []); byDisease.get(r.mondo).push(r); }
+  const diseases=[...byDisease.entries()]
+    .map(([m,rs])=>({m, name:(nodes[m]&&nodes[m].name)||('node '+m), rs, n:rs.length}))
+    .sort((a,b)=>b.n-a.n);
+  host.innerHTML='<p class="sect">Associations <span class="ah">(microbe–disease)</span></p>'+
+    '<input id="assocQ" type="search" placeholder="find a disease…">'+
+    '<div id="assocList"></div>';
+  host.style.display='block';
+  const list=host.querySelector('#assocList'), q=host.querySelector('#assocQ');
+  function showDiseases(filter){
+    list.innerHTML='';
+    const f=(filter||'').toLowerCase();
+    for(const d of diseases.filter(d=>!f || d.name.toLowerCase().includes(f)).slice(0,8)){
+      const row=document.createElement('div'); row.className='arow';
+      row.innerHTML='<span class="an"></span><span class="ac"></span>';
+      row.querySelector('.an').textContent=d.name;
+      row.querySelector('.ac').textContent=d.n+(d.n===1?' microbe':' microbes');
+      row.onclick=()=>showMicrobes(d);
+      list.appendChild(row);
+    }
+    if(!list.children.length){
+      const e=document.createElement('div'); e.className='aempty';
+      e.textContent='no disease matches'; list.appendChild(e);
+    }
+  }
+  function showMicrobes(d){
+    list.innerHTML='';
+    const back=document.createElement('div'); back.className='arow aback';
+    back.textContent='← diseases'; back.onclick=()=>{ q.value=''; showDiseases(''); };
+    list.appendChild(back);
+    const rs=[...d.rs].sort((a,b)=> a.dir===b.dir ? b.papers.length-a.papers.length : (a.dir==='enriched'? -1 : 1));
+    for(const r of rs){
+      const row=document.createElement('div'); row.className='arow';
+      row.innerHTML='<span class="ag"></span><span class="at"></span><span class="ac"></span>';
+      row.querySelector('.ag').textContent = r.dir==='enriched' ? '▲' : '▽';
+      row.querySelector('.at').textContent = r.taxon;
+      row.querySelector('.ac').textContent = r.papers.length;
+      if(r.note) row.title=r.note;
+      row.onclick=()=>assocShow(r, d);
+      list.appendChild(row);
+    }
+  }
+  function assocShow(r, d){
+    const sp=new Set(r.papers);
+    for(let i=0;i<N;i++){
+      const k=state.keys[i];
+      let c=state.colorOf.get(k)||MUTED, a=.1;
+      if(sp.has(i)) a=.95; else c=MUTED;
+      tmpC.set(c);
+      colT[i*3]=tmpC.r; colT[i*3+1]=tmpC.g; colT[i*3+2]=tmpC.b;
+      alpT[i]=a;
+    }
+    stainStart=performance.now(); assocActive=true;
+    const card=el('terrcard');
+    card.querySelector('.tn').textContent=r.taxon;
+    card.querySelector('.tf').textContent=(r.dir==='enriched'?'▲ enriched':'▽ depleted')+
+      ' in '+d.name+' — '+r.papers.length+(r.papers.length===1?' paper':' papers')+(r.note? ' · '+r.note : '');
+    card.classList.add('show');
+  }
+  q.addEventListener('input', ()=>showDiseases(q.value));
+  showDiseases('');
+  window.__assoc={ count:()=>{ let n=0; for(let i=0;i<N;i++) if(alpT[i]>.5) n++; return n; } };
+}
 (function(){
   const levels=[.09,.2,.38,.6].map(f=>f*dmax);
   const X=i=>EXT.x0+gw*i/(G-1), Z=i=>EXT.z0+gh*i/(G-1);
@@ -1675,7 +1770,7 @@ function setGlobe(on, snap){
 document.querySelectorAll('#viewrow button').forEach(b=>{ b.onclick=()=>setGlobe(b.dataset.view==='globe'); });
 
 /* ---------- featured territories: legend click flies there (Half-Earth pattern) ---------- */
-function hideTerrCard(){ el('terrcard').classList.remove('show'); }
+function hideTerrCard(){ el('terrcard').classList.remove('show'); assocClearPaint(); }
 function terrFact(k, n){
   const yrs=new Map();
   for(let i=0;i<N;i++){ if(state.keys[i]!==k) continue;
