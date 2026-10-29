@@ -55,6 +55,7 @@ body{background:var(--paper); color:var(--ink); font-family:var(--sans); font-si
 .terr.assoc .ln{display:block; text-align:center; line-height:1.35}
 .terr.assoc .ag{font-style:normal; font-size:10px; margin-right:5px; letter-spacing:0}
 .terr.assoc small{display:block; text-align:center; margin:2px 0 0; font-size:9.5px}
+.terr.assoc .at2{font-family:var(--sans); font-style:normal; font-size:9.5px; color:var(--ink-soft); margin-left:6px; letter-spacing:.02em}
 .terr.assoc::after{height:5px; opacity:.4}
 .terr small{font-family:var(--sans); font-style:normal; font-size:10px; color:var(--ink-soft); margin-left:6px; letter-spacing:.02em}
 
@@ -729,7 +730,8 @@ el('shareLink').onclick=e=>{
 /* ---------- microbe-disease associations: renderer for a layer that only
    exists once the paper's own extraction provides it (see SCHEMA.md).
    With no associations.js, none of this UI exists. ---------- */
-let assocActive=false, assocReapply=null, assocBeatInfo=null, assocBeatGo=null;
+let assocActive=false, assocReapply=null, assocBeatInfo=null, assocBeatGo=null,
+    assocTour=null, assocFinale=null, assocCineShow=null;
 function assocClearPaint(){ if(assocActive){ assocActive=false; assocReapply=null; assocLabelsClear(); repaint(); } }
 (function(){
   const s=document.createElement('script');
@@ -764,33 +766,36 @@ function initAssoc(){
       nd:ts.filter(t=>t.kind==='depleted').length,
       nc:ts.filter(t=>t.kind==='contested').length};
   }).sort((a,b)=>b.ts.length-a.ts.length);
-  /* the flyover's association beat: prefer the disease whose signature shows BOTH
-     shapes (>=1 filled and >=1 open-ring paper), then most papers, then most taxa */
-  assocBeatInfo=(()=>{
-    let best=null;
-    for(const d of diseases){
-      const enr=new Set(), dep=new Set();
-      for(const t of d.ts){ for(const r of t.enr) r.papers.forEach(i=>enr.add(i));
-                            for(const r of t.dep) r.papers.forEach(i=>dep.add(i)); }
-      let ring=0; dep.forEach(i=>{ if(!enr.has(i)) ring++; });
-      const all=new Set([...enr,...dep]);
-      const score=(enr.size>0&&ring>0?1000:0)+all.size*10+d.ts.length;
-      if(!best || score>best.score) best={score, d, all};
-    }
-    if(!best) return null;
-    let cx=0,cz=0; best.all.forEach(i=>{ cx+=WX[i]; cz+=WZ[i]; });
-    cx/=best.all.size; cz/=best.all.size;
-    let spread=0; best.all.forEach(i=>spread=Math.max(spread, Math.hypot(WX[i]-cx, WZ[i]-cz)));
-    const d=best.d;
-    return {d, name:d.name, ne:d.ne, nd:d.nd, nc:d.nc, nPap:best.all.size, cx, cz, spread};
-  })();
-  assocBeatGo=()=>{
-    const d=assocBeatInfo.d, enr=new Set(), dep=new Set();
+  /* flyover association data: every disease scored and ranked once. The score
+     prefers signatures that show BOTH shapes (>=1 filled and >=1 open-ring
+     paper), then most papers, then most taxa. rank[0] is S4's beat, rank[1..3]
+     are S5's tour, and all of rank pages through the S7 finale. */
+  const rank=diseases.map(d=>{
+    const enr=new Set(), dep=new Set();
     for(const t of d.ts){ for(const r of t.enr) r.papers.forEach(i=>enr.add(i));
                           for(const r of t.dep) r.papers.forEach(i=>dep.add(i)); }
-    paint(enr, dep);
-    assocLabelsSet(d.ts.map(t=>({taxon:t.taxon, kind:t.kind, papers:t.papers})));
-  };
+    let ring=0; dep.forEach(i=>{ if(!enr.has(i)) ring++; });
+    const all=new Set([...enr,...dep]);
+    let cx=0,cz=0; all.forEach(i=>{ cx+=WX[i]; cz+=WZ[i]; });
+    cx/=all.size; cz/=all.size;
+    let spread=0; all.forEach(i=>spread=Math.max(spread, Math.hypot(WX[i]-cx, WZ[i]-cz)));
+    return {d, name:d.name, ne:d.ne, nd:d.nd, nc:d.nc, nPap:all.size, enr, dep, cx, cz, spread,
+      score:(enr.size>0&&ring>0?1000:0)+all.size*10+d.ts.length};
+  }).sort((a,b)=>b.score-a.score);
+  assocCineShow=info=>{ paint(info.enr, info.dep);
+    assocLabelsSet(info.d.ts.map(t=>({taxon:t.taxon, kind:t.kind, papers:t.papers}))); };
+  assocBeatInfo=rank[0]||null;
+  assocBeatGo=assocBeatInfo? ()=>assocCineShow(assocBeatInfo) : null;
+  assocTour=rank.length>3? rank.slice(1,4) : rank.slice(0,3);
+  while(assocTour.length && assocTour.length<3) assocTour.push(assocTour[assocTour.length-1]);
+  if(!assocTour.length) assocTour=null;
+  const enrAll=new Set(), depAll=new Set();
+  for(const r of A) r.papers.forEach(i=>(r.dir==='enriched'?enrAll:depAll).add(i));
+  const pgs=[]; for(let i=0;i<rank.length;i+=12) pgs.push(rank.slice(i,i+12).map(g=>(
+    {taxon:g.name, kind:'enriched', g:'', tail:'▲'+g.ne+' ▽'+g.nd,
+     papers:[...new Set([...g.enr,...g.dep])]})));
+  assocFinale={ pages:pgs, paintAll:()=>paint(enrAll, depAll),
+    totals:{R:A.length, D:diseases.length, P:new Set([...enrAll,...depAll]).size} };
   const meta=window.ASSOC_META||{};
   host.innerHTML='<p class="sect">Associations <span class="ah">(microbe–disease)</span></p>'+
     (meta.label? '<p class="alabel"></p>' : '')+
@@ -1165,37 +1170,41 @@ function assocLabPool(){
     labelsDiv.appendChild(d); assocLabEls.push(d);
   }
 }
-function assocLabelsSet(items){        /* items: [{taxon, kind, papers:[atlas idx], sub?}] */
+function assocLabelsSet(items, opts){  /* items: [{taxon, kind, papers:[atlas idx], sub?, g?, tail?}] */
+  opts=opts||{};
   assocLabPool();
   const G=k=> k==='contested'?'▲▽':(k==='enriched'?'▲':'▽');
   const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   /* microbes sharing the same supporting papers share an anchor: merge them
-     into one multi-line label instead of letting the collider hide all but one */
-  const cells=new Map();
+     into one multi-line label instead of letting the collider hide all but one
+     (noMerge keeps items 1:1, for the finale's disease labels) */
+  const cells=new Map(); let ci=0;
   for(const t of items){
     let cx=0,cz=0; for(const i of t.papers){ cx+=WX[i]; cz+=WZ[i]; }
     cx/=t.papers.length; cz/=t.papers.length;
-    const key=Math.round(cx/3)+'_'+Math.round(cz/3);
+    const key=opts.noMerge? 'i'+(ci++) : Math.round(cx/3)+'_'+Math.round(cz/3);
     let g=cells.get(key);
     if(!g){ g={items:[], papers:new Set(), sx:0, sz:0}; cells.set(key,g); }
     g.items.push(t); g.sx+=cx; g.sz+=cz;
     for(const i of t.papers) g.papers.add(i);
   }
-  const groups=[...cells.values()]
-    .sort((a,b)=>b.papers.size-a.papers.size || b.items.length-a.items.length)
-    .slice(0,12);
+  let groups=[...cells.values()];
+  if(!opts.keepOrder) groups.sort((a,b)=>b.papers.size-a.papers.size || b.items.length-a.items.length);
+  groups=groups.slice(0,12);
   assocLab=groups.map((g,j)=>{
     const cx=g.sx/g.items.length, cz=g.sz/g.items.length;
     let spread=0; for(const i of g.papers) spread=Math.max(spread, Math.hypot(WX[i]-cx, WZ[i]-cz));
-    g.items.sort((a,b)=>b.papers.length-a.papers.length);
+    if(!opts.keepOrder) g.items.sort((a,b)=>b.papers.length-a.papers.length);
     const el=assocLabEls[j];
     el.innerHTML = g.items.slice(0,3).map(t=>
-        '<span class="ln"><span class="ag">'+G(t.kind)+'</span><span class="an">'+esc(t.taxon)+'</span></span>').join('')
+        '<span class="ln">'+(t.g===''? '' : '<span class="ag">'+(t.g!==undefined? t.g : G(t.kind))+'</span>')+
+        '<span class="an">'+esc(t.taxon)+'</span>'+
+        (t.tail? '<span class="at2">'+esc(t.tail)+'</span>' : '')+'</span>').join('')
       + (g.items.length>3 ? '<small>+'+(g.items.length-3)+' more — see the panel</small>'
          : (g.items.length===1 && g.items[0].sub ? '<small>'+esc(g.items[0].sub)+'</small>' : ''));
     const gp=[0,0,0]; toGlobe(cx, cz, gp, 0);
     return {el, x:cx, z:cz, gx:gp[0], gy:gp[1], gz:gp[2], w:el.offsetWidth, h:el.offsetHeight,
-            papers:[...g.papers], spread};
+            papers:[...g.papers], spread, key:(g.items.length===1? g.items[0].taxon : null), shown:false};
   });
   for(let j=assocLab.length;j<12;j++) assocLabEls[j].style.opacity=0;
   assocLeadersBuild();
@@ -1250,19 +1259,27 @@ function placeLabels(){
   let aF=0;
   if (assocActive && assocLab.length){
     aF=Math.min(1,(performance.now()-stainStart)/800)*lf;
-    const tc=el('terrcard');
-    const cardR = tc.classList.contains('show') ? tc.getBoundingClientRect() : null;
+    const rects=[];
+    for(const id of ['terrcard','cinecard','cinecap']){
+      const e=el(id); if(e.classList.contains('show')) rects.push(e.getBoundingClientRect());
+    }
     for (const L of assocLab){
       if (onGlobe) v3.set(L.gx, L.gy, L.gz);
       else v3.set(L.x, state.relief? 10:0, L.z);
       const facing = !onGlobe || ((L.gx-GC.x)*cgx + L.gy*cgy + (L.gz-GC.z)*cgz > 0);
       v3.project(camera);
       const sx=(v3.x*.5+.5)*innerWidth; let sy=(-v3.y*.5+.5)*innerHeight;
-      /* a label behind the fact card is unreadable: lift it just above the card */
-      if (cardR && sx+L.w/2>cardR.left && sx-L.w/2<cardR.right && sy>cardR.top-6 && sy-L.h<cardR.bottom)
-        sy=Math.max(L.h+42, cardR.top-6);
+      /* a label behind a card or caption is unreadable: lift it just above */
+      for(const R of rects)
+        if (sx+L.w/2>R.left && sx-L.w/2<R.right && sy>R.top-6 && sy-L.h<R.bottom)
+          sy=Math.max(L.h+42, R.top-6);
       const vis = facing && v3.z<1 && sx>-60 && sx<innerWidth+60 && sy>0 && sy<innerHeight;
-      tryPlace(L, sx, sy, vis? .95*aF : 0);
+      const op = vis? .95*aF : 0;
+      /* labels sharing a crowded spot stack vertically before giving up */
+      let ok=tryPlace(L, sx, sy, op);
+      if(!ok && op>0) ok=tryPlace(L, sx, sy-(L.h+10), op);
+      if(!ok && op>0) ok=tryPlace(L, sx, sy+(L.h+18), op);
+      L.shown=ok;
     }
   }
   leadMat.opacity = (assocActive && leadSegs>0) ? .6*aF : 0;
@@ -1747,6 +1764,18 @@ function buildFlight2(){
       a:'<i>'+esc(ab.name)+'</i><span>▲ '+ab.ne+' enriched · ▽ '+ab.nd+' depleted'+
         (ab.nc? ' · '+ab.nc+' contested':'')+' · '+ab.nPap+(ab.nPap===1?' paper':' papers')+'</span>',
       b:((window.ASSOC_META&&window.ASSOC_META.label)? esc(window.ASSOC_META.label)+' · ':'')+'▲ filled, ▽ open ring'});
+    if(assocTour){     /* S5 becomes the signature tour; the compare captions go */
+      const vc=assocTour.map((g,i)=>({t0:51+4*i, t1:53.6+4*i,
+        a:'<i>'+esc(g.name)+'</i><span>▲ '+g.ne+' enriched · ▽ '+g.nd+' depleted'+
+          (g.nc? ' · '+g.nc+' contested':'')+' · '+g.nPap+(g.nPap===1?' paper':' papers')+'</span>', b:''}));
+      F2.caps.splice(5, 2, vc[0], vc[1], vc[2]);
+    }
+    if(assocFinale){   /* layer totals land just before the honesty card */
+      const T=assocFinale.totals;
+      F2.caps.splice(F2.caps.length-1, 0, {t0:74.5, t1:76.5,
+        a:'<i>microbe–disease associations</i><span>'+T.R+' claims · '+T.D+' diseases · '+T.P+' papers</span>',
+        b:(window.ASSOC_META&&window.ASSOC_META.label)? esc(window.ASSOC_META.label) : ''});
+    }
   }
   F2.ok=true;
 }
@@ -1783,7 +1812,16 @@ function rawPose(si, t){
       return poseFlat(ax, az, w, -0.2+q*Math.PI/2, 34);
     }
     return poseFlat(F.M.anchor.x, F.M.anchor.z, 58, -0.2+q*Math.PI/2, 34); }
-  if(si===4){                                          /* S5 STATIC / compare */
+  if(si===4){                                          /* S5: the signature tour, or the static compare */
+    if(assocTour){
+      const vi=Math.max(0, Math.min(2, Math.floor((t-50)/4)));
+      const tp=i=>{ const g=assocTour[i];
+        return poseFlat(g.cx, g.cz, Math.max(26, g.spread*4+18), -0.2+Math.PI/2+0.07*i, 36); };
+      let p=tp(vi);
+      const lv=t-(50+vi*4);
+      if(vi>0 && lv<1.6) p=mixPose(tp(vi-1), p, eC(lv/1.6));
+      return p;
+    }
     return poseFlat(F.midAB.x, F.midAB.z, 130, -0.2+Math.PI/2, 42); }
   if(si===5){ const q=seg(62,74);                      /* S6 PULL OUT / the flat finale begins */
     const s=F.p3.at(q), a0=-0.2+Math.PI/2;
@@ -1795,7 +1833,7 @@ function camAt(t){
   t=Math.max(0, Math.min(CDUR-.01, t));
   const si=shotIndex(t), local=t-SHOTS[si], BL=1.6;
   let p=rawPose(si, t);
-  if(si>0 && si<5 && local<BL){                        /* weld shot boundaries */
+  if(si>0 && (si<5 || (si===5 && assocTour)) && local<BL){   /* weld shot boundaries */
     p=mixPose(rawPose(si-1, SHOTS[si]), p, eC(local/BL)); p.mix=0;
   }
   return p;
@@ -1820,13 +1858,14 @@ function cineStain(kind){
   stainStart=performance.now();
 }
 function shotEnter(si){
-  if(cinema.abeat){ cinema.abeat=false; assocClearPaint(); }
+  if(cinema.abeat || cinema.tourI>=0 || cinema.fin) assocClearPaint();
+  cinema.abeat=false; cinema.tourI=-1; cinema.pageI=-1; cinema.fin=false;
   cinema.shot=si; cinema.peak=0; cinema.half=false;
   uNBtarget = si===2 ? 0.3 : 1;   /* the tracking shot lives inside the near field: keep it crisp */
   console.log('[flight] shot '+(si+1)+' t='+cinema.t.toFixed(2)+' cam='+
     camera.position.toArray().map(v=>v.toFixed(1)).join(','));
   if(si===3) cineStain('mondo');
-  else if(si===4) cineStain('isoA');
+  else if(si===4) cineStain(assocTour? 'none' : 'isoA');
   else cineStain('none');
 }
 function renderCap(idx){
@@ -1877,7 +1916,8 @@ function cinemaStart(){
   state.isolate=null; repaint(); buildLabels();
   buildFlight2();
   cinema.on=true; cinema.t=0; cinema.paused=false; cinema.slideI=0; cinema.slideTimer=0;
-  cinema.shot=-1; cinema.half=false; cinema.abeat=false; cinema.speed=0; cinema.peak=0; cinema.justSeeked=true;
+  cinema.shot=-1; cinema.half=false; cinema.abeat=false; cinema.tourI=-1; cinema.pageI=-1; cinema.fin=false;
+  cinema.speed=0; cinema.peak=0; cinema.justSeeked=true;
   assocClearPaint();   /* a drawer stain never rides into the flight */
   capActive=-2; pendingCap=-2; uNBtarget=1; fling.vA=0; fling.vP=0;
   document.body.classList.add('cinema'); document.body.classList.remove('cinehide');
@@ -1892,11 +1932,13 @@ function cineSeek(t){
   if(si!==cinema.shot) shotEnter(si);
   else if(si===4 && cinema.t<56.25 && cinema.half){ cinema.half=false; cineStain('isoA'); }
   else if(si===3 && cinema.t<43 && cinema.abeat){ cinema.abeat=false; assocClearPaint(); cineStain('mondo'); }
+  else if(si===6 && cinema.t<75 && cinema.fin){ cinema.fin=false; cinema.pageI=-1; assocClearPaint(); cineStain('none'); }
 }
 function cinemaEnd(natural){
   if(!cinema.on) return;
   cinema.on=false; uNBtarget=0;
-  if(cinema.abeat){ cinema.abeat=false; assocClearPaint(); }
+  if(cinema.abeat || cinema.tourI>=0 || cinema.fin) assocClearPaint();
+  cinema.abeat=false; cinema.tourI=-1; cinema.pageI=-1; cinema.fin=false;
   document.body.classList.remove('cinema'); document.body.classList.remove('cinehide');
   el('cinecap').classList.remove('show'); el('cinecard').classList.remove('show');
   el('scalebar').classList.remove('show');
@@ -1941,7 +1983,25 @@ function cinemaFrame(dt){
   const t=cinema.t, si=shotIndex(t);
   if(si!==cinema.shot) shotEnter(si);
   if(cinema.shot===3 && !cinema.abeat && t>=43 && assocBeatGo){ cinema.abeat=true; assocBeatGo(); }
-  if(cinema.shot===4 && !cinema.half && t>=56.25){ cinema.half=true; cineStain('isoB'); }
+  if(cinema.shot===4 && assocTour){                /* the signature tour advances by time */
+    const vi=Math.max(0, Math.min(2, Math.floor((t-50)/4)));
+    if(vi!==cinema.tourI){ cinema.tourI=vi; assocCineShow(assocTour[vi]); }
+  } else if(cinema.shot===4 && !cinema.half && t>=56.25){ cinema.half=true; cineStain('isoB'); }
+  if(cinema.shot===6 && assocFinale && t>=75){     /* the whole layer, paged under the honesty card */
+    if(!cinema.fin){ cinema.fin=true; cinema.lost=new Set(); assocFinale.paintAll(); }
+    const P=assocFinale.pages.length;
+    const pi=P>1? Math.floor((t-75)/2.8)%P : 0;
+    if(pi!==cinema.pageI){
+      if(cinema.pageI>=0) for(const L of assocLab){
+        if(!L.key) continue;
+        if(L.shown===false) cinema.lost.add(L.key); else cinema.lost.delete(L.key);
+      }
+      cinema.pageI=pi;
+      const items=assocFinale.pages[pi].slice()
+        .sort((a,b)=>(cinema.lost.has(b.taxon)?1:0)-(cinema.lost.has(a.taxon)?1:0));
+      assocLabelsSet(items, {keepOrder:true, noMerge:true});
+    }
+  }
   const p=camAt(t);
   camera.position.set(p.cx, p.cy, p.cz);
   lookPt.set(p.lx, p.ly, p.lz);
@@ -1979,7 +2039,8 @@ addEventListener('keydown', e=>{
   else if(e.key==='h'||e.key==='H') document.body.classList.toggle('cinehide');
 });
 window.__cinema={ start:cinemaStart, exit:()=>cinemaEnd(false), seek:t=>{ if(cinema.on) cineSeek(t); },
-  pose:()=>camera.position.toArray(), knn:()=>({flat:knn.flat, globe:knn.globe, done:knn.done}) };
+  pose:()=>camera.position.toArray(), knn:()=>({flat:knn.flat, globe:knn.globe, done:knn.done}),
+  state:()=>({t:cinema.t, shot:cinema.shot, tourI:cinema.tourI, pageI:cinema.pageI, fin:cinema.fin, abeat:cinema.abeat}) };
 
 /* ---------- globe projection toggle ---------- */
 function syncGlobeVis(){
