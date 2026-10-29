@@ -53,8 +53,10 @@ Return JSON only:
 1. **Two independent passes per paper.** Ideally different models, or at
    minimum different prompt orderings/temperatures; the two passes must
    not see each other's output. (The pilot in this repository used the
-   same model in two separately framed passes — state this limitation
-   wherever the pilot is described; the full run should use two models.)
+   same model in two independent sessions — fresh context, reversed paper
+   order, differently framed prompt, neither seeing the other's output —
+   state this limitation wherever the pilot is described; the full run
+   should use two different models.)
 2. **Agreement filter.** Keep a tuple only when both passes produce the
    same (taxon at the same rank, disease, direction), matched after
    lowercasing and stripping strain suffixes. Everything else is
