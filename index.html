@@ -51,6 +51,11 @@ body{background:var(--paper); color:var(--ink); font-family:var(--sans); font-si
   font:9px var(--sans); letter-spacing:.06em; color:var(--ink-soft); opacity:0;
   text-shadow:0 0 4px var(--paper), 0 0 2px var(--paper); transition:opacity .4s; font-variant-numeric:tabular-nums}
 .terr.minor::after{height:5px; opacity:.3}
+.terr.assoc{font-family:var(--serif); font-style:italic; font-variant-caps:normal; letter-spacing:.02em; font-size:12.5px; color:var(--ink)}
+.terr.assoc .ln{display:block; text-align:center; line-height:1.35}
+.terr.assoc .ag{font-style:normal; font-size:10px; margin-right:5px; letter-spacing:0}
+.terr.assoc small{display:block; text-align:center; margin:2px 0 0; font-size:9.5px}
+.terr.assoc::after{height:5px; opacity:.4}
 .terr small{font-family:var(--sans); font-style:normal; font-size:10px; color:var(--ink-soft); margin-left:6px; letter-spacing:.02em}
 
 /* cartouche */
@@ -607,6 +612,14 @@ monoGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(22*3
 const monoMat=new THREE.LineDashedMaterial({color:0x4A5FB0, transparent:true, opacity:.5, dashSize:1.8, gapSize:1.4});
 const mono=new THREE.Line(monoGeo, monoMat); mono.visible=false; mono.renderOrder=4; mono.frustumCulled=false;
 scene.add(mono);
+
+/* association leaders: thin dashed ties from a taxon's label anchor to each of
+   its supporting papers, so a spread-out microbe never reads as owning the map */
+const leadGeo=new THREE.BufferGeometry();
+leadGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(60*6),3));
+const leadMat=new THREE.LineDashedMaterial({color:0xCBC7B8, transparent:true, opacity:0, dashSize:1.1, gapSize:1.3});
+const leads=new THREE.LineSegments(leadGeo, leadMat); leads.visible=false; leads.renderOrder=3; leads.frustumCulled=false;
+scene.add(leads);
 function monorailSet(pts){
   if(!pts){ mono.visible=false; return; }
   const a=monoGeo.attributes.position.array;
@@ -717,7 +730,7 @@ el('shareLink').onclick=e=>{
    exists once the paper's own extraction provides it (see SCHEMA.md).
    With no associations.js, none of this UI exists. ---------- */
 let assocActive=false, assocReapply=null;
-function assocClearPaint(){ if(assocActive){ assocActive=false; assocReapply=null; repaint(); } }
+function assocClearPaint(){ if(assocActive){ assocActive=false; assocReapply=null; assocLabelsClear(); repaint(); } }
 (function(){
   const s=document.createElement('script');
   s.src='associations.js';
@@ -761,6 +774,7 @@ function initAssoc(){
   const list=host.querySelector('#assocList'), q=host.querySelector('#assocQ'), sum=host.querySelector('#assocSum');
   const glyph=k=> k==='enriched'? '▲' : k==='depleted'? '▽' : '▲▽';
   function showDiseases(filter){
+    assocClearPaint();
     sum.textContent=''; list.innerHTML='';
     const f=(filter||'').toLowerCase();
     const match=diseases.filter(d=>!f || d.name.toLowerCase().includes(f));
@@ -782,6 +796,7 @@ function initAssoc(){
     }
   }
   function showMicrobes(d){
+    assocClearPaint();
     list.innerHTML='';
     sum.textContent=d.ts.length+(d.ts.length===1?' microbe: ':' microbes: ')+d.ne+' enriched · '+
       d.nd+' depleted'+(d.nc? ' · '+d.nc+' contested':'');
@@ -831,6 +846,9 @@ function initAssoc(){
       : (t.kind==='enriched'? '▲ enriched':'▽ depleted')+' in '+d.name+' — '+
         t.papers.length+(t.papers.length===1?' paper':' papers');
     card.classList.add('show');
+    const ys=t.papers.map(i=>P[i][F.year]).filter(Boolean);
+    assocLabelsSet([{taxon:t.taxon, kind:t.kind, papers:t.papers,
+      sub: ys.length? (Math.min(...ys)===Math.max(...ys)? ''+Math.min(...ys) : Math.min(...ys)+'–'+Math.max(...ys)) : ''}]);
   }
   function assocShowAll(d){
     assocReapply=()=>assocShowAll(d);
@@ -846,6 +864,7 @@ function initAssoc(){
     card.querySelector('.tf').textContent=d.ne+' enriched · '+d.nd+' depleted'+
       (d.nc? ' · '+d.nc+' contested':'')+' microbes — '+nPap+(nPap===1?' paper':' papers')+' · ▲ filled, ▽ open ring';
     card.classList.add('show');
+    assocLabelsSet(d.ts.map(t=>({taxon:t.taxon, kind:t.kind, papers:t.papers})));
   }
   function assocPapers(t, d){
     const ap=el('apapers');
@@ -868,7 +887,9 @@ function initAssoc(){
   showDiseases('');
   el('apapersClose').onclick=()=>el('apapers').classList.remove('show');
   window.__assoc={ count:()=>{ let n=0; for(let i=0;i<N;i++) if(alpT[i]>.5) n++; return n; },
-    dirs:()=>{ let f=0,r2=0; for(let i=0;i<N;i++){ if(dirArr[i]===1)f++; if(dirArr[i]===2)r2++; } return {filled:f, ring:r2}; } };
+    dirs:()=>{ let f=0,r2=0; for(let i=0;i<N;i++){ if(dirArr[i]===1)f++; if(dirArr[i]===2)r2++; } return {filled:f, ring:r2}; },
+    labels:()=>{ const t=[]; if(assocLabEls) for(const d of assocLabEls){ if(parseFloat(d.style.opacity)>0) t.push(d.textContent.trim()); } return t; },
+    built:()=>assocLab.length, leaders:()=>leadSegs };
 }
 (function(){
   const levels=[.09,.2,.38,.6].map(f=>f*dmax);
@@ -1107,6 +1128,75 @@ function buildClusterTier(){          /* second-tier labels: topic clusters, sho
   });
   state.keys=saved;
 }
+/* ---------- association labels: identity on the map while a signature is stained ---------- */
+let assocLab=[], assocLabEls=null, leadSegs=0;
+function assocLabPool(){
+  if(assocLabEls) return;
+  assocLabEls=[];
+  for(let i=0;i<12;i++){
+    const d=document.createElement('div'); d.className='terr assoc'; d.style.opacity=0;
+    labelsDiv.appendChild(d); assocLabEls.push(d);
+  }
+}
+function assocLabelsSet(items){        /* items: [{taxon, kind, papers:[atlas idx], sub?}] */
+  assocLabPool();
+  const G=k=> k==='contested'?'▲▽':(k==='enriched'?'▲':'▽');
+  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  /* microbes sharing the same supporting papers share an anchor: merge them
+     into one multi-line label instead of letting the collider hide all but one */
+  const cells=new Map();
+  for(const t of items){
+    let cx=0,cz=0; for(const i of t.papers){ cx+=WX[i]; cz+=WZ[i]; }
+    cx/=t.papers.length; cz/=t.papers.length;
+    const key=Math.round(cx/3)+'_'+Math.round(cz/3);
+    let g=cells.get(key);
+    if(!g){ g={items:[], papers:new Set(), sx:0, sz:0}; cells.set(key,g); }
+    g.items.push(t); g.sx+=cx; g.sz+=cz;
+    for(const i of t.papers) g.papers.add(i);
+  }
+  const groups=[...cells.values()]
+    .sort((a,b)=>b.papers.size-a.papers.size || b.items.length-a.items.length)
+    .slice(0,12);
+  assocLab=groups.map((g,j)=>{
+    const cx=g.sx/g.items.length, cz=g.sz/g.items.length;
+    let spread=0; for(const i of g.papers) spread=Math.max(spread, Math.hypot(WX[i]-cx, WZ[i]-cz));
+    g.items.sort((a,b)=>b.papers.length-a.papers.length);
+    const el=assocLabEls[j];
+    el.innerHTML = g.items.slice(0,3).map(t=>
+        '<span class="ln"><span class="ag">'+G(t.kind)+'</span><span class="an">'+esc(t.taxon)+'</span></span>').join('')
+      + (g.items.length>3 ? '<small>+'+(g.items.length-3)+' more — see the panel</small>'
+         : (g.items.length===1 && g.items[0].sub ? '<small>'+esc(g.items[0].sub)+'</small>' : ''));
+    const gp=[0,0,0]; toGlobe(cx, cz, gp, 0);
+    return {el, x:cx, z:cz, gx:gp[0], gy:gp[1], gz:gp[2], w:el.offsetWidth, h:el.offsetHeight,
+            papers:[...g.papers], spread};
+  });
+  for(let j=assocLab.length;j<12;j++) assocLabEls[j].style.opacity=0;
+  assocLeadersBuild();
+  placeLabels.dirty=true;
+}
+function assocLeadersBuild(){          /* built for the TARGET projection; hidden mid-morph anyway */
+  const a=leadGeo.attributes.position.array; let s=0;
+  const onG=globeTarget>.5, t=[0,0,0];
+  const lift=o=>{ const dx=o[0]-GC.x, dz=o[2]-GC.z, k=1.006; o[0]=GC.x+dx*k; o[1]*=k; o[2]=GC.z+dz*k; };
+  for(const L of assocLab){
+    if(L.spread<=14) continue;        /* a tight cluster needs no ties */
+    for(const i of L.papers.slice(0,10)){
+      if(s>=60) break;
+      if(onG){ toGlobe(L.x,L.z,t,0); lift(t); a[s*6]=t[0]; a[s*6+1]=t[1]; a[s*6+2]=t[2];
+               toGlobe(WX[i],WZ[i],t,0); lift(t); a[s*6+3]=t[0]; a[s*6+4]=t[1]; a[s*6+5]=t[2]; }
+      else   { a[s*6]=L.x; a[s*6+1]=.5; a[s*6+2]=L.z; a[s*6+3]=WX[i]; a[s*6+4]=.5; a[s*6+5]=WZ[i]; }
+      s++;
+    }
+  }
+  leadSegs=s; leadGeo.setDrawRange(0, s*2);
+  leadGeo.attributes.position.needsUpdate=true;
+  leads.computeLineDistances(); leads.visible=s>0;
+}
+function assocLabelsClear(){
+  assocLab=[]; if(assocLabEls) for(const d of assocLabEls) d.style.opacity=0;
+  leadSegs=0; leads.visible=false; leadMat.opacity=0;
+}
+
 const v3=new THREE.Vector3();
 function placeLabels(){
   let lf = 1;   /* flyover: labels identify, they do not orient - they appear once the shot settles */
@@ -1129,6 +1219,26 @@ function placeLabels(){
   };
   let prim=0;   /* during the flyover at most three labels, until the finale reveals them all */
   const primCap = cinema.on && cinema.t<=74 ? 3 : 99;
+  /* association labels claim space first while a signature is stained */
+  let aF=0;
+  if (assocActive && assocLab.length){
+    aF=Math.min(1,(performance.now()-stainStart)/800)*lf;
+    const tc=el('terrcard');
+    const cardR = tc.classList.contains('show') ? tc.getBoundingClientRect() : null;
+    for (const L of assocLab){
+      if (onGlobe) v3.set(L.gx, L.gy, L.gz);
+      else v3.set(L.x, state.relief? 10:0, L.z);
+      const facing = !onGlobe || ((L.gx-GC.x)*cgx + L.gy*cgy + (L.gz-GC.z)*cgz > 0);
+      v3.project(camera);
+      const sx=(v3.x*.5+.5)*innerWidth; let sy=(-v3.y*.5+.5)*innerHeight;
+      /* a label behind the fact card is unreadable: lift it just above the card */
+      if (cardR && sx+L.w/2>cardR.left && sx-L.w/2<cardR.right && sy>cardR.top-6 && sy-L.h<cardR.bottom)
+        sy=Math.max(L.h+42, cardR.top-6);
+      const vis = facing && v3.z<1 && sx>-60 && sx<innerWidth+60 && sy>0 && sy<innerHeight;
+      tryPlace(L, sx, sy, vis? .95*aF : 0);
+    }
+  }
+  leadMat.opacity = (assocActive && leadSegs>0) ? .6*aF : 0;
   for (const L of labelEls){
     if (onGlobe) v3.set(L.gx, L.gy, L.gz);
     else v3.set(L.x, state.relief? 10:0, L.z);
@@ -1142,7 +1252,7 @@ function placeLabels(){
   }
   /* second tier fades in as the camera comes close, in either projection */
   const minorGlobe = globeMix>.95;
-  const minorF = cinema.on ? 0
+  const minorF = (cinema.on || assocActive) ? 0   /* minors yield while a signature is labeled */
     : minorGlobe ? Math.min(1, Math.max(0, (100-ctl.dist)/22))
     : globeMix<.05 ? Math.min(1, Math.max(0, (58-ctl.dist)/14)) : 0;
   const minorCap = minorGlobe ? 4 : (ctl.dist<36 ? 6 : 3);
@@ -1874,6 +1984,7 @@ document.querySelectorAll('#viewrow button').forEach(b=>{ b.onclick=()=>{
   setGlobe(b.dataset.view==='globe');
   if(re) re();
 }; });
+addEventListener('keydown', e=>{ if(e.key==='Escape' && !cinema.on && assocActive) hideTerrCard(); });
 
 /* ---------- featured territories: legend click flies there (Half-Earth pattern) ---------- */
 function hideTerrCard(){ el('terrcard').classList.remove('show'); el('apapers').classList.remove('show'); assocClearPaint(); }
