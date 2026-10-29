@@ -729,7 +729,7 @@ el('shareLink').onclick=e=>{
 /* ---------- microbe-disease associations: renderer for a layer that only
    exists once the paper's own extraction provides it (see SCHEMA.md).
    With no associations.js, none of this UI exists. ---------- */
-let assocActive=false, assocReapply=null;
+let assocActive=false, assocReapply=null, assocBeatInfo=null, assocBeatGo=null;
 function assocClearPaint(){ if(assocActive){ assocActive=false; assocReapply=null; assocLabelsClear(); repaint(); } }
 (function(){
   const s=document.createElement('script');
@@ -764,6 +764,33 @@ function initAssoc(){
       nd:ts.filter(t=>t.kind==='depleted').length,
       nc:ts.filter(t=>t.kind==='contested').length};
   }).sort((a,b)=>b.ts.length-a.ts.length);
+  /* the flyover's association beat: prefer the disease whose signature shows BOTH
+     shapes (>=1 filled and >=1 open-ring paper), then most papers, then most taxa */
+  assocBeatInfo=(()=>{
+    let best=null;
+    for(const d of diseases){
+      const enr=new Set(), dep=new Set();
+      for(const t of d.ts){ for(const r of t.enr) r.papers.forEach(i=>enr.add(i));
+                            for(const r of t.dep) r.papers.forEach(i=>dep.add(i)); }
+      let ring=0; dep.forEach(i=>{ if(!enr.has(i)) ring++; });
+      const all=new Set([...enr,...dep]);
+      const score=(enr.size>0&&ring>0?1000:0)+all.size*10+d.ts.length;
+      if(!best || score>best.score) best={score, d, all};
+    }
+    if(!best) return null;
+    let cx=0,cz=0; best.all.forEach(i=>{ cx+=WX[i]; cz+=WZ[i]; });
+    cx/=best.all.size; cz/=best.all.size;
+    let spread=0; best.all.forEach(i=>spread=Math.max(spread, Math.hypot(WX[i]-cx, WZ[i]-cz)));
+    const d=best.d;
+    return {d, name:d.name, ne:d.ne, nd:d.nd, nc:d.nc, nPap:best.all.size, cx, cz, spread};
+  })();
+  assocBeatGo=()=>{
+    const d=assocBeatInfo.d, enr=new Set(), dep=new Set();
+    for(const t of d.ts){ for(const r of t.enr) r.papers.forEach(i=>enr.add(i));
+                          for(const r of t.dep) r.papers.forEach(i=>dep.add(i)); }
+    paint(enr, dep);
+    assocLabelsSet(d.ts.map(t=>({taxon:t.taxon, kind:t.kind, papers:t.papers})));
+  };
   const meta=window.ASSOC_META||{};
   host.innerHTML='<p class="sect">Associations <span class="ah">(microbe–disease)</span></p>'+
     (meta.label? '<p class="alabel"></p>' : '')+
@@ -1713,6 +1740,14 @@ function buildFlight2(){
       ? 'The 2D layout is the measurement; the third dimension is legibility (neighbour preservation '+knn.flat+'%). A globe view exists; it keeps '+knn.globe+'% of 2D neighbours.'
       : 'Measuring how many of each paper’s '+K_NN+' nearest map neighbours each projection keeps…'},
   ];
+  if(assocBeatInfo){     /* the stain shot deepens into one disease's microbial signature */
+    const ab=assocBeatInfo;
+    F2.caps[3].t0=39; F2.caps[3].t1=42.6;
+    F2.caps.splice(4, 0, {t0:44.2, t1:49.3,
+      a:'<i>'+esc(ab.name)+'</i><span>▲ '+ab.ne+' enriched · ▽ '+ab.nd+' depleted'+
+        (ab.nc? ' · '+ab.nc+' contested':'')+' · '+ab.nPap+(ab.nPap===1?' paper':' papers')+'</span>',
+      b:((window.ASSOC_META&&window.ASSOC_META.label)? esc(window.ASSOC_META.label)+' · ':'')+'▲ filled, ▽ open ring'});
+  }
   F2.ok=true;
 }
 function poseFlat(lx, lz, w, azim, elevDeg){
@@ -1740,6 +1775,13 @@ function rawPose(si, t){
     const c=F.ridge.getPoint(Math.max(0,q-0.10)), l=F.ridge.getPoint(Math.min(1,q+0.06));
     return { cx:c.x, cy:13, cz:c.z, lx:l.x, ly:0, lz:l.z, mix:0 }; }
   if(si===3){ const q=seg(36,50);                      /* S4 ARC / emphasize a static target */
+    if(assocBeatInfo){                                 /* …then re-aim onto the association signature */
+      const r=eC(Math.max(0, Math.min(1, (t-43)/3)));
+      const ax=F.M.anchor.x+(assocBeatInfo.cx-F.M.anchor.x)*r;
+      const az=F.M.anchor.z+(assocBeatInfo.cz-F.M.anchor.z)*r;
+      const w=58+(Math.max(26, assocBeatInfo.spread*4+18)-58)*r;
+      return poseFlat(ax, az, w, -0.2+q*Math.PI/2, 34);
+    }
     return poseFlat(F.M.anchor.x, F.M.anchor.z, 58, -0.2+q*Math.PI/2, 34); }
   if(si===4){                                          /* S5 STATIC / compare */
     return poseFlat(F.midAB.x, F.midAB.z, 130, -0.2+Math.PI/2, 42); }
@@ -1778,6 +1820,7 @@ function cineStain(kind){
   stainStart=performance.now();
 }
 function shotEnter(si){
+  if(cinema.abeat){ cinema.abeat=false; assocClearPaint(); }
   cinema.shot=si; cinema.peak=0; cinema.half=false;
   uNBtarget = si===2 ? 0.3 : 1;   /* the tracking shot lives inside the near field: keep it crisp */
   console.log('[flight] shot '+(si+1)+' t='+cinema.t.toFixed(2)+' cam='+
@@ -1834,7 +1877,8 @@ function cinemaStart(){
   state.isolate=null; repaint(); buildLabels();
   buildFlight2();
   cinema.on=true; cinema.t=0; cinema.paused=false; cinema.slideI=0; cinema.slideTimer=0;
-  cinema.shot=-1; cinema.half=false; cinema.speed=0; cinema.peak=0; cinema.justSeeked=true;
+  cinema.shot=-1; cinema.half=false; cinema.abeat=false; cinema.speed=0; cinema.peak=0; cinema.justSeeked=true;
+  assocClearPaint();   /* a drawer stain never rides into the flight */
   capActive=-2; pendingCap=-2; uNBtarget=1; fling.vA=0; fling.vP=0;
   document.body.classList.add('cinema'); document.body.classList.remove('cinehide');
   sizeBars();
@@ -1847,10 +1891,12 @@ function cineSeek(t){
   const si=shotIndex(cinema.t);
   if(si!==cinema.shot) shotEnter(si);
   else if(si===4 && cinema.t<56.25 && cinema.half){ cinema.half=false; cineStain('isoA'); }
+  else if(si===3 && cinema.t<43 && cinema.abeat){ cinema.abeat=false; assocClearPaint(); cineStain('mondo'); }
 }
 function cinemaEnd(natural){
   if(!cinema.on) return;
   cinema.on=false; uNBtarget=0;
+  if(cinema.abeat){ cinema.abeat=false; assocClearPaint(); }
   document.body.classList.remove('cinema'); document.body.classList.remove('cinehide');
   el('cinecap').classList.remove('show'); el('cinecard').classList.remove('show');
   el('scalebar').classList.remove('show');
@@ -1894,6 +1940,7 @@ function cinemaFrame(dt){
   if(cinema.t>=CDUR){ cinemaEnd(true); return; }
   const t=cinema.t, si=shotIndex(t);
   if(si!==cinema.shot) shotEnter(si);
+  if(cinema.shot===3 && !cinema.abeat && t>=43 && assocBeatGo){ cinema.abeat=true; assocBeatGo(); }
   if(cinema.shot===4 && !cinema.half && t>=56.25){ cinema.half=true; cineStain('isoB'); }
   const p=camAt(t);
   camera.position.set(p.cx, p.cy, p.cz);
