@@ -1,6 +1,22 @@
 # Embedding the Qiita Atlas in another site
 
-The atlas is static files with only relative asset references, so it can be
+## Fastest path — one iframe, no files
+
+The deployed atlas can be framed directly; nothing needs to be hosted:
+
+```html
+<iframe src="https://qiita-atlas-explorer-three.vercel.app"
+        style="width:100%;height:700px;border:0" title="Qiita Atlas"></iframe>
+```
+
+On a WordPress site (e.g. a lab site with `?page_id=` URLs), paste that
+into a **Custom HTML** block on any page. Updates to the atlas appear
+automatically, since the frame always shows the current deployment.
+
+## Self-hosted — for permanence
+
+To make the lab site independent of the deployment above, the atlas is
+static files with only relative asset references, so it can be
 dropped into any subdirectory of an existing site unchanged:
 
 ```
