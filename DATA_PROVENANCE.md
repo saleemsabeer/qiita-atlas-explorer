@@ -22,3 +22,5 @@ are shown muted, not hidden.
 - `og-image.png` — a screenshot of the rendered page, committed so link previews (Open Graph) show the map. Presentation only, generated from the page itself.
 
 - Globe projection — the same flat layout mapped onto a sphere (longitude proportional to x, latitude proportional to y) for presentation. The sphere carries no geographic meaning; the papers have no location data.
+
+- `associations.js` (optional, not yet present) — microbe–disease associations with directionality, produced ONLY from the paper's own extraction via `tools/validate_associations.py` (see `SCHEMA.md`); every association is traceable to its supporting papers in the atlas. The site renders this layer only when the file exists; nothing is invented.
