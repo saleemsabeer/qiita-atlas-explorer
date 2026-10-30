@@ -373,6 +373,7 @@ body.collapsed #cartouche{z-index:21}
     <p><b>The third dimension here is presentation, not measurement.</b> The map is a flat plane filmed by a moving camera. The optional relief mode lifts points by local paper density and says so on screen. The globe view drapes this same flat layout over a sphere — the sphere, like the relief, is presentation, not geography; the papers carry no location data. The axes have no units.</p>
     <p>Every paper keeps its identity: hover for the title, click to open it on PubMed. Disease labels are nodes of the MONDO Disease Ontology, release <b>2026-09-01</b>; body sites use the atlas's seven classes. Colors follow histology stains, the palette microscopists use on human tissue.</p>
     <p>The data embedded in this page is identical to the published atlas. The contour lines and territory labels are derived from point density for reading, nothing scientific was added or changed.</p>
+    <p id="abAssoc" style="display:none"></p>
     <p style="margin-bottom:0"><button class="ghost" id="aboutClose">Close</button></p>
   </div>
 </div>
@@ -797,6 +798,17 @@ function initAssoc(){
   assocFinale={ pages:pgs, paintAll:()=>paint(enrAll, depAll),
     totals:{R:A.length, D:diseases.length, P:new Set([...enrAll,...depAll]).size} };
   const meta=window.ASSOC_META||{};
+  /* the About panel's AI statement: present only when the layer is, numbers computed */
+  (function(){
+    const p=el('abAssoc'); if(!p) return;
+    const nD=new Set(A.map(r=>r.mondo)).size;
+    p.innerHTML='<b>The microbe–disease associations are AI-extracted.</b> A large-language-model '+
+      'transformer reads each paper under the repository’s published double-pass protocol — two blind '+
+      'passes, only claims both passes agree on are kept, and the disagreement rate between passes is '+
+      'published as the layer’s error statement. Currently <b>'+A.length+'</b> claims across <b>'+nD+
+      '</b> diseases, each traceable to its PubMed sources'+(meta.label? ' ('+meta.label+')':'')+'.';
+    p.style.display='';
+  })();
   host.innerHTML='<p class="sect">Associations <span class="ah">(microbe–disease)</span></p>'+
     (meta.label? '<p class="alabel"></p>' : '')+
     '<input id="assocQ" type="search" placeholder="find a disease…">'+
